@@ -40,7 +40,7 @@ import {
   type ZoomInterpolateExpression,
 } from './zoomOpacity';
 import { visualTreatment } from './visualMapping';
-import { LayerRegistry, type MapLayerSpec } from './LayerRegistry';
+import { APP_LAYER_SLOT, LayerRegistry, type MapLayerSpec } from './LayerRegistry';
 
 // Re-exported so consumers/tests can type-check layer specs against the same
 // structural shape the registry uses.
@@ -182,6 +182,7 @@ export function buildSusceptibilityFillLayer(
   return {
     id: SUSCEPTIBILITY_FILL_LAYER_ID,
     type: 'fill',
+    slot: APP_LAYER_SLOT,
     source: sourceId,
     paint: {
       'fill-color': susceptibilityFillColorExpression(),
@@ -206,6 +207,7 @@ export function buildSusceptibilityOutlineLayer(
   return {
     id: SUSCEPTIBILITY_OUTLINE_LAYER_ID,
     type: 'line',
+    slot: APP_LAYER_SLOT,
     source: sourceId,
     paint: {
       'line-color': susceptibilityFillColorExpression(),

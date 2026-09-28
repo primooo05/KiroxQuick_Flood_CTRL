@@ -9,9 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MapManager,
   TILE_WATCHDOG_MS,
+  VIEW_3D_PITCH,
   type MapConstructorOptions,
   type MinimalMap,
 } from './MapManager';
+import { NCR_CLIP_LAYER_ID, NCR_CLIP_SOURCE_ID } from './metroManilaClipMask';
 import {
   METRO_MANILA_EXTENT,
   isWithinMetroManila,
@@ -554,6 +556,93 @@ describe('MapManager.frameOverview (Req 1.2)', () => {
       overviewFitOptions(),
     );
 
+    mgr.destroy();
+  });
+});
+
+// --- 3D view (Mapbox Standard) ---------------------------------------------
+
+describe('MapManager 3D view', () => {
+  function initWith3DFake() {
+    const { map, factory } = makeCameraFake();
+    const styleMap = map as CameraFakeMap & {
+      setConfigProperty: ReturnType<typeof vi.fn>;
+      addSource: ReturnType<typeof vi.fn>;
+      addLayer: ReturnType<typeof vi.fn>;
+      getLayer: ReturnType<typeof vi.fn>;
+    };
+    styleMap.setConfigProperty = vi.fn();
+    styleMap.addSource = vi.fn();
+    styleMap.addLayer = vi.fn();
+    styleMap.getLayer = vi.fn(() => undefined);
+    const mgr = new MapManager();
+    mgr.init({
+      container: document.createElement('div'),
+      config: CONFIG,
+      mapFactory: factory,
+    });
+    return { map: styleMap, mgr };
+  }
+
+  it('constructs with the Standard faded/day config and 3D hidden', () => {
+    const { map, mgr } = initWith3DFake();
+    expect(map.__options.config).toEqual({
+      basemap: { theme: 'faded', lightPreset: 'day', show3dObjects: false },
+    });
+    expect(mgr.is3D()).toBe(false);
+    mgr.destroy();
+  });
+
+  it('installs the NCR-only clip layer on load', () => {
+    const { map, mgr } = initWith3DFake();
+    map.emit('load');
+    expect(map.addSource).toHaveBeenCalledWith(
+      NCR_CLIP_SOURCE_ID,
+      expect.objectContaining({ type: 'geojson' }),
+    );
+    expect(map.addLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: NCR_CLIP_LAYER_ID, type: 'clip', source: NCR_CLIP_SOURCE_ID }),
+    );
+    mgr.destroy();
+  });
+
+  it('set3D toggles Standard 3D objects and tilts / flattens the camera', () => {
+    const { map, mgr } = initWith3DFake();
+
+    mgr.set3D(true);
+    expect(map.setConfigProperty).toHaveBeenLastCalledWith('basemap', 'show3dObjects', true);
+    expect(map.easeTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pitch: VIEW_3D_PITCH }),
+    );
+    expect(mgr.is3D()).toBe(true);
+
+    mgr.set3D(false);
+    expect(map.setConfigProperty).toHaveBeenLastCalledWith('basemap', 'show3dObjects', false);
+    expect(map.easeTo).toHaveBeenLastCalledWith(expect.objectContaining({ pitch: 0 }));
+    expect(mgr.is3D()).toBe(false);
+    mgr.destroy();
+  });
+
+  it('recenter keeps the 3D tilt while in 3D', () => {
+    const { map, mgr } = initWith3DFake();
+    mgr.recenter();
+    expect(map.fitBounds).toHaveBeenLastCalledWith(METRO_MANILA_EXTENT, { duration: 800 });
+    mgr.set3D(true);
+    mgr.recenter();
+    expect(map.fitBounds).toHaveBeenLastCalledWith(METRO_MANILA_EXTENT, {
+      duration: 800,
+      pitch: VIEW_3D_PITCH,
+    });
+    mgr.destroy();
+  });
+
+  it('set3D is a safe no-op on minimal fakes and before init', () => {
+    expect(() => new MapManager().set3D(true)).not.toThrow();
+    const { map, factory } = makeFake();
+    const mgr = new MapManager();
+    mgr.init({ container: document.createElement('div'), config: CONFIG, mapFactory: factory });
+    expect(() => mgr.set3D(true)).not.toThrow();
+    expect(() => map.emit('load')).not.toThrow();
     mgr.destroy();
   });
 });

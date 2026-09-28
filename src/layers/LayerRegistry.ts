@@ -66,6 +66,13 @@ export interface MapLayerSpec {
   [key: string]: unknown;
 }
 
+/**
+ * Mapbox Standard slot for app data layers: above roads, BEHIND 3D buildings,
+ * so flood fills/outlines drape on the ground instead of painting over
+ * buildings in the 3D view. Layers without a slot render above everything.
+ */
+export const APP_LAYER_SLOT = 'middle';
+
 /** Mapbox GL JS `visibility` layout values. */
 type Visibility = 'visible' | 'none';
 

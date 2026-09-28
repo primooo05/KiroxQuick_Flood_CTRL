@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mapbox-docs": {
+      "url": "https://mcp-docs.mapbox.com/mcp",
+      "disabled": false
+    }
+  }
+}

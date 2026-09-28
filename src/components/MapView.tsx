@@ -41,6 +41,7 @@ import { DemoDataBadge } from './overlays/DemoDataBadge';
 import { FloodPopup, type FloodPopupProps } from './overlays/FloodPopup';
 import { ZoomControls } from './controls/ZoomControls';
 import { RecenterControl } from './controls/RecenterControl';
+import { ViewModeControl } from './controls/ViewModeControl';
 import { LocationControl } from './controls/LocationControl';
 import { LayerControl } from './controls/LayerControl';
 import { LayersButton } from './controls/LayersButton';
@@ -88,6 +89,8 @@ export interface MapManagerLike {
   zoomIn?: () => void;
   zoomOut?: () => void;
   recenter?: (durationMs?: number) => void;
+  /** Switches the 2D/3D view (tilt + Standard 3D buildings). */
+  set3D?: (on: boolean) => void;
   /**
    * Frames the tuned NCR overview (Req 1.2). Called on ready so startup shows
    * Metro Manila centered and dominant. Optional so minimal fakes stay valid.
@@ -393,6 +396,13 @@ export function MapView({
   const handleZoomOut = (): void => managerRef.current?.zoomOut?.();
   const handleRecenter = (): void => managerRef.current?.recenter?.();
 
+  // 2D/3D view. Starts in 2D (the existing overview); 3D keeps center/zoom.
+  const [is3D, setIs3D] = useState(false);
+  const handleViewModeToggle = (next: boolean): void => {
+    setIs3D(next);
+    managerRef.current?.set3D?.(next);
+  };
+
   /**
    * On a granted location, drop/move the current-location (origin) marker and
    * center the map. Guarded so it is a no-op without a real map (tests).
@@ -450,6 +460,9 @@ export function MapView({
         <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />
         <div className="baharoute-control-card baharoute-control-card--single">
           <RecenterControl onRecenter={handleRecenter} />
+        </div>
+        <div className="baharoute-control-card baharoute-control-card--single">
+          <ViewModeControl is3D={is3D} onToggle={handleViewModeToggle} />
         </div>
         <div className="baharoute-control-card baharoute-control-card--single">
           <LocationControl onLocated={handleLocated} />

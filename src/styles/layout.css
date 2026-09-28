@@ -334,6 +334,17 @@ body,
   color: var(--baharoute-focus-ring-color);
 }
 
+/* 2D/3D toggle: text glyph, pressed state shown by color + inset outline. */
+.baharoute-view-mode-control {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.baharoute-view-mode-control[aria-pressed='true'] {
+  color: var(--baharoute-focus-ring-color);
+  box-shadow: inset 0 0 0 2px currentColor;
+}
+
 /* Location status message as a small toast next to the button. */
 .baharoute-location-control {
   position: relative;

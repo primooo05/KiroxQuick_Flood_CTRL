@@ -37,7 +37,7 @@ import {
   SUSCEPTIBILITY_COLORS,
   type ColorToken,
 } from '../map/basemap/colorTokens';
-import { LayerRegistry, type MapLayerSpec } from './LayerRegistry';
+import { APP_LAYER_SLOT, LayerRegistry, type MapLayerSpec } from './LayerRegistry';
 import { cityFloodSummaryLayer as cityFloodSummaryDataLayer } from './dataLayers';
 
 // Re-exported so consumers/tests can type-check layer specs against the same
@@ -133,6 +133,7 @@ export function buildCitySummaryFillLayer(
   return {
     id: CITY_SUMMARY_FILL_LAYER_ID,
     type: 'fill',
+    slot: APP_LAYER_SLOT,
     source: sourceId,
     paint: {
       'fill-color': citySummaryFillColorExpression(),
@@ -155,6 +156,7 @@ export function buildCitySummaryOutlineLayer(
   return {
     id: CITY_SUMMARY_OUTLINE_LAYER_ID,
     type: 'line',
+    slot: APP_LAYER_SLOT,
     source: sourceId,
     paint: {
       'line-color': citySummaryFillColorExpression(),

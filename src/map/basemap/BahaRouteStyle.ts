@@ -10,14 +10,14 @@
  * NEVER hardcoded here (Req 17.1, 17.2). This module therefore carries no token
  * and no provider secrets; it only names the stock style to load.
  *
- * CHOSEN STYLE — `mapbox://styles/mapbox/light-v11`:
- *   A clean, low-clutter light street style. Roads are readable with a clear
- *   hierarchy, water is visible, and place labels are legible. Its muted, light
- *   palette lets the reserved saturated flood overlays (red/orange/yellow
- *   susceptibility + flood-state colors from {@link ./colorTokens}) sit ON TOP
- *   and remain the dominant visual concern (design → quiet basemap intent).
- *   It is a neutral cartographic style — not a Google Maps clone — and, unlike
- *   the dark styles, it keeps the flood palette high-contrast against the base.
+ * CHOSEN STYLE — `mapbox://styles/mapbox/standard` (3D view):
+ *   Mapbox Standard ships 3D buildings and landmarks, which the flat
+ *   `light-v11` style could not provide. It is configured with the `faded`
+ *   theme so the basemap stays muted and the reserved saturated flood overlays
+ *   (red/orange/yellow susceptibility + flood-state colors from
+ *   {@link ./colorTokens}) remain the dominant visual concern (design → quiet
+ *   basemap intent). 3D objects start HIDDEN so the default view is the same
+ *   flat 2D overview as before; the 2D/3D toggle turns them on.
  *
  * The base/flood color-token discipline (base features ≤ 30% saturation,
  * reserved flood tokens > 30%) now lives entirely in {@link ./colorTokens} and
@@ -32,9 +32,25 @@ export const STYLE_MAX_ZOOM = 18;
 /**
  * The stock Mapbox style URL used for the BahaRoute basemap. A `mapbox://`
  * style reference resolved by mapbox-gl using the access token supplied at map
- * construction. See the module doc comment for why `light-v11` was chosen.
+ * construction. See the module doc comment for why Standard was chosen.
  */
-export const BAHAROUTE_MAPBOX_STYLE_URL = 'mapbox://styles/mapbox/light-v11';
+export const BAHAROUTE_MAPBOX_STYLE_URL = 'mapbox://styles/mapbox/standard';
+
+/**
+ * The import id Mapbox assigns to the Standard basemap when the map is loaded
+ * from its style URL. Used as the target of `setConfigProperty`.
+ */
+export const STANDARD_BASEMAP_IMPORT_ID = 'basemap';
+
+/**
+ * Mapbox Standard configuration applied at construction: muted `faded` theme,
+ * `day` lighting, and 3D objects hidden until the user switches to 3D.
+ */
+export const BAHAROUTE_STANDARD_CONFIG = {
+  theme: 'faded',
+  lightPreset: 'day',
+  show3dObjects: false,
+} as const;
 
 /**
  * Returns the stock Mapbox style URL for the BahaRoute basemap. Exposed as a

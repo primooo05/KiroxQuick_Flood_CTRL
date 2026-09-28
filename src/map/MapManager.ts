@@ -21,11 +21,19 @@
 import mapboxgl from 'mapbox-gl';
 import type { AppConfig } from '../types/config';
 import {
+  BAHAROUTE_STANDARD_CONFIG,
   bahaRouteStyleUrl,
+  STANDARD_BASEMAP_IMPORT_ID,
   STYLE_MAX_ZOOM,
   STYLE_MIN_ZOOM,
 } from './basemap/BahaRouteStyle';
 import { METRO_MANILA_EXTENT } from './metroManilaExtent';
+import { metroManilaCityBoundaries } from '../data/geojson/metroManilaCityBoundaries';
+import {
+  buildMetroManilaClipMask,
+  NCR_CLIP_LAYER_ID,
+  NCR_CLIP_SOURCE_ID,
+} from './metroManilaClipMask';
 import {
   OVERVIEW_BOUNDS,
   OVERVIEW_DESKTOP_CENTER,
@@ -50,6 +58,12 @@ const INITIAL_CENTER: [number, number] = OVERVIEW_DESKTOP_CENTER;
  * STYLE_MAX_ZOOM]`. frameOverview() applies the responsive framing on load.
  */
 const INITIAL_ZOOM = 11;
+
+/** Camera pitch (degrees) used while the 3D view is on. */
+export const VIEW_3D_PITCH = 60;
+
+/** Duration (ms) of the 2D ↔ 3D camera tilt animation. */
+const VIEW_MODE_TRANSITION_MS = 800;
 
 /**
  * The minimal, ENGINE-AGNOSTIC subset of the map `Map` API that MapManager
@@ -85,6 +99,12 @@ export interface MinimalMap {
    * failing that to the plain fitBounds framing.
    */
   getContainer?(): HTMLElement;
+  // Optional style APIs for the Standard 3D view. OPTIONAL so minimal fakes
+  // stay valid; MapManager guards each call.
+  setConfigProperty?(importId: string, name: string, value: unknown): unknown;
+  addSource?(id: string, source: unknown): unknown;
+  addLayer?(layer: unknown, beforeId?: string): unknown;
+  getLayer?(id: string): unknown;
 }
 
 /**
@@ -99,7 +119,7 @@ export interface MinimalMap {
  */
 export interface MapConstructorOptions {
   container: HTMLElement | string;
-  /** A stock Mapbox style URL, e.g. `mapbox://styles/mapbox/light-v11`. */
+  /** A stock Mapbox style URL, e.g. `mapbox://styles/mapbox/standard`. */
   style: string;
   /** Initial center `[lng, lat]` — a Metro Manila / NCR-focused first paint. */
   center: [number, number];
@@ -109,6 +129,8 @@ export interface MapConstructorOptions {
   maxZoom: number;
   /** The Mapbox access token, applied so mapbox-gl can fetch the style/tiles. */
   accessToken: string;
+  /** Mapbox Standard import config, keyed by import id (e.g. `basemap`). */
+  config?: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -158,6 +180,7 @@ const defaultMapFactory: MapFactory = (options) =>
     minZoom: options.minZoom,
     maxZoom: options.maxZoom,
     accessToken: options.accessToken,
+    config: options.config,
   }) as unknown as MinimalMap;
 
 /**
@@ -184,7 +207,13 @@ export class MapManager {
   private readonly maxZoom = STYLE_MAX_ZOOM;
 
   // Bound listeners retained so they can be removed on destroy.
-  private readonly handleLoad = (): void => this.settleReady();
+  /** Whether the 3D view (tilt + Standard 3D objects) is currently on. */
+  private view3D = false;
+
+  private readonly handleLoad = (): void => {
+    this.installMetroManilaClip();
+    this.settleReady();
+  };
   private readonly handleError = (): void => this.settleFailure('error');
 
   /**
@@ -226,6 +255,8 @@ export class MapManager {
       minZoom: this.minZoom,
       maxZoom: this.maxZoom,
       accessToken,
+      // Standard: faded theme, day light, 3D hidden until set3D(true).
+      config: { [STANDARD_BASEMAP_IMPORT_ID]: { ...BAHAROUTE_STANDARD_CONFIG } },
     });
     this.map = map;
     this.container = options.container;
@@ -248,7 +279,34 @@ export class MapManager {
    *   1000ms budget of Req 7.2).
    */
   recenter(durationMs = 800): void {
-    this.map?.fitBounds(METRO_MANILA_EXTENT, { duration: durationMs });
+    // fitBounds resets pitch to 0 unless given one, so keep the 3D tilt.
+    this.map?.fitBounds(
+      METRO_MANILA_EXTENT,
+      this.view3D ? { duration: durationMs, pitch: VIEW_3D_PITCH } : { duration: durationMs },
+    );
+  }
+
+  /**
+   * Switches between the flat 2D view and the 3D view. 3D tilts the camera to
+   * {@link VIEW_3D_PITCH} and shows Mapbox Standard's 3D objects (clipped to
+   * Metro Manila on load); 2D flattens the camera and hides them. Keeps the
+   * current center/zoom. Safe no-op before init / on fakes lacking the APIs.
+   */
+  set3D(on: boolean): void {
+    this.view3D = on;
+    const map = this.map;
+    if (!map) return;
+    try {
+      map.setConfigProperty?.(STANDARD_BASEMAP_IMPORT_ID, 'show3dObjects', on);
+    } catch {
+      // Style not ready or not Standard: the camera tilt below still applies.
+    }
+    map.easeTo?.({ pitch: on ? VIEW_3D_PITCH : 0, duration: VIEW_MODE_TRANSITION_MS });
+  }
+
+  /** True while the 3D view is on. */
+  is3D(): boolean {
+    return this.view3D;
   }
 
   // --- camera pass-throughs (Milestone A, Req 1.2, 10.5) -------------------
@@ -406,6 +464,34 @@ export class MapManager {
   }
 
   // --- internal ------------------------------------------------------------
+
+  /**
+   * Adds a Mapbox `clip` layer that removes 3D buildings and instanced models
+   * (trees) everywhere OUTSIDE the 17 NCR cities, so the 3D view renders only
+   * for Metro Manila. Best-effort: skipped on fakes without style APIs, and a
+   * failure never blocks the map from becoming ready.
+   */
+  private installMetroManilaClip(): void {
+    const map = this.map;
+    if (!map || typeof map.addSource !== 'function' || typeof map.addLayer !== 'function') {
+      return;
+    }
+    try {
+      if (map.getLayer?.(NCR_CLIP_LAYER_ID)) return;
+      map.addSource(NCR_CLIP_SOURCE_ID, {
+        type: 'geojson',
+        data: buildMetroManilaClipMask(metroManilaCityBoundaries),
+      });
+      map.addLayer({
+        id: NCR_CLIP_LAYER_ID,
+        type: 'clip',
+        source: NCR_CLIP_SOURCE_ID,
+        layout: { 'clip-layer-types': ['model'] },
+      });
+    } catch {
+      // Clip is an enhancement; the base map stays usable without it.
+    }
+  }
 
   /** Starts the single 15s tile watchdog (Req 1.6). */
   private startWatchdog(): void {
