@@ -19,6 +19,7 @@
 //   focus visible until then.
 
 import type { CSSProperties } from 'react';
+import { MinusIcon, PlusIcon } from './icons';
 
 /** Minimum Touch_Target size in CSS pixels (Req 5.4 / 10.4). */
 export const MIN_TOUCH_TARGET_PX = 44;
@@ -54,9 +55,10 @@ export function ZoomControls({
   const containerClass = className
     ? `baharoute-zoom-controls ${className}`
     : 'baharoute-zoom-controls';
+  // Enhancement: both buttons share one rounded card (baharoute-control-card).
 
   return (
-    <div className={containerClass} data-testid="zoom-controls" role="group" aria-label="Zoom controls">
+    <div className={`${containerClass} baharoute-control-card`} data-testid="zoom-controls" role="group" aria-label="Zoom controls">
       <button
         type="button"
         className="baharoute-zoom-in baharoute-focus-ring"
@@ -66,7 +68,7 @@ export function ZoomControls({
         style={buttonStyle}
         onClick={onZoomIn}
       >
-        <span aria-hidden="true">+</span>
+        <PlusIcon />
       </button>
       <button
         type="button"
@@ -77,7 +79,7 @@ export function ZoomControls({
         style={buttonStyle}
         onClick={onZoomOut}
       >
-        <span aria-hidden="true">−</span>
+        <MinusIcon />
       </button>
     </div>
   );

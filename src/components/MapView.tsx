@@ -43,6 +43,9 @@ import { ZoomControls } from './controls/ZoomControls';
 import { RecenterControl } from './controls/RecenterControl';
 import { LocationControl } from './controls/LocationControl';
 import { LayerControl } from './controls/LayerControl';
+import { LayersButton } from './controls/LayersButton';
+import { CloseIcon } from './controls/icons';
+import { MapLegend } from './overlays/MapLegend';
 import { MarkerManager, type MarkerManagerOptions } from './markers/markerManager';
 import { mapboxMarkerFactory } from './markers/mapboxMarkerFactory';
 import {
@@ -375,6 +378,17 @@ export function MapView({
     }
   }
 
+  // Enhancement: Escape closes an open popup regardless of where focus is.
+  const popupOpen = popup !== null;
+  useEffect(() => {
+    if (!popupOpen) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setPopup(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [popupOpen]);
+
   const handleZoomIn = (): void => managerRef.current?.zoomIn?.();
   const handleZoomOut = (): void => managerRef.current?.zoomOut?.();
   const handleRecenter = (): void => managerRef.current?.recenter?.();
@@ -434,27 +448,38 @@ export function MapView({
       */}
       <div className="baharoute-controls" data-testid="map-controls">
         <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />
-        <RecenterControl onRecenter={handleRecenter} />
-        <LocationControl onLocated={handleLocated} />
-        <LayerControl layers={layers} onToggle={handleLayerToggle} />
+        <div className="baharoute-control-card baharoute-control-card--single">
+          <RecenterControl onRecenter={handleRecenter} />
+        </div>
+        <div className="baharoute-control-card baharoute-control-card--single">
+          <LocationControl onLocated={handleLocated} />
+        </div>
+        {/* Enhancement: layer list opens on demand instead of always covering the map. */}
+        <LayersButton>
+          <LayerControl layers={layers} onToggle={handleLayerToggle} />
+        </LayersButton>
       </div>
+
+      {/* Enhancement: collapsible legend explaining the flood colors. */}
+      {phase !== 'error' && <MapLegend />}
 
       {/* Susceptibility popup, rendered as React state driven by map clicks. */}
       {popup && (
+        // Enhancement: floating card (desktop) / bottom sheet (mobile) with an
+        // icon close button; Escape also closes it. Placement lives in layout.css.
         <div
           className="baharoute-popup-host"
           data-testid="map-popup-host"
-          style={{ position: 'absolute', left: 12, bottom: 12, zIndex: 3 }}
         >
-          <FloodPopup {...popup.props} />
           <button
             type="button"
-            className="baharoute-popup-close"
+            className="baharoute-popup-close baharoute-icon-button baharoute-focus-ring"
             aria-label="Close popup"
             onClick={() => setPopup(null)}
           >
-            Close
+            <CloseIcon />
           </button>
+          <FloodPopup {...popup.props} />
         </div>
       )}
     </div>

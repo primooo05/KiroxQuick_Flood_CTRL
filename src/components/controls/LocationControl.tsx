@@ -20,6 +20,7 @@ import {
 } from '../../services/geolocation';
 import { isWithinMetroManila } from '../../map/metroManilaExtent';
 import { LOCATION_MESSAGES } from './locationMessages';
+import { LocationIcon } from './icons';
 
 /** A function that resolves the current location. Matches `requestLocation`. */
 export type RequestLocationFn = () => Promise<LocationResult>;
@@ -124,8 +125,9 @@ export function LocationControl({
       <button
         type="button"
         // Visible focus-ring hook (Task 17, Req 11.2): styled in layout.css.
-        className="baharoute-control-button baharoute-focus-ring"
+        className="baharoute-control-button baharoute-round-button baharoute-focus-ring"
         aria-label={label}
+        title={label}
         aria-busy={busy}
         onClick={handleActivate}
         // ≥44×44 CSS px touch target (Req 5.4, 10.4). Kept inline so the control
@@ -133,7 +135,7 @@ export function LocationControl({
         style={{ minWidth: 44, minHeight: 44 }}
       >
         {/* Text label ensures an accessible name even without CSS/icons. */}
-        <span aria-hidden="true">◎</span>
+        <LocationIcon />
       </button>
       {message !== null && (
         <p

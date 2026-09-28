@@ -14,6 +14,10 @@
 import type { FloodDataType, FloodState, SusceptibilityLevel } from '../../types/flood';
 import { floodStateLabel, susceptibilityLabel } from '../../layers/visualMapping';
 import { Disclaimer } from './Disclaimer';
+import {
+  FLOOD_STATE_COLORS,
+  SUSCEPTIBILITY_COLORS,
+} from '../../map/basemap/colorTokens';
 
 /** Human-readable label for the data type shown in the popup. */
 const DATA_TYPE_LABELS: Record<FloodDataType, string> = {
@@ -85,9 +89,32 @@ export function FloodPopup({
       aria-label={`Flood information for ${area}`}
       data-testid="flood-popup"
     >
+      {/* Enhancement: lead with the place and its level so the answer comes
+          first; details (source, date) follow. The chip pairs color with text. */}
+      <h2 className="baharoute-flood-popup__title" data-testid="flood-popup-area">
+        {area}
+      </h2>
+      {level !== undefined && (
+        <p className="baharoute-flood-popup__chip">
+          <span
+            aria-hidden="true"
+            className="baharoute-flood-popup__swatch"
+            style={{ backgroundColor: SUSCEPTIBILITY_COLORS[level].hex }}
+          />
+          {susceptibilityLabel(level)} susceptibility
+        </p>
+      )}
+      {state !== undefined && (
+        <p className="baharoute-flood-popup__chip">
+          <span
+            aria-hidden="true"
+            className="baharoute-flood-popup__swatch"
+            style={{ backgroundColor: FLOOD_STATE_COLORS[state].hex }}
+          />
+          {floodStateLabel(state)}
+        </p>
+      )}
       <dl className="baharoute-flood-popup__fields">
-        <dt>Area</dt>
-        <dd data-testid="flood-popup-area">{area}</dd>
 
         <dt>Data type</dt>
         <dd data-testid="flood-popup-data-type">{DATA_TYPE_LABELS[dataType]}</dd>

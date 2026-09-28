@@ -20,6 +20,7 @@
 // pixels (Req 10.4).
 
 import type { CSSProperties } from 'react';
+import { RecenterIcon } from './icons';
 
 export interface RecenterControlProps {
   /**
@@ -59,6 +60,7 @@ export function RecenterControl({
 }: RecenterControlProps) {
   const classNames = [
     'baharoute-control',
+    'baharoute-round-button',
     'baharoute-recenter-control',
     // Visible focus-ring hook (Task 17, Req 11.2): styled in layout.css.
     'baharoute-focus-ring',
@@ -78,9 +80,13 @@ export function RecenterControl({
           is not identified by color alone (Req 11.4). The glyph is decorative;
           the accessible name comes from aria-label. */}
       <span aria-hidden="true" className="baharoute-recenter-control__icon">
-        ⌖
+        <RecenterIcon />
       </span>
-      <span className="baharoute-recenter-control__text">Recenter</span>
+      {/* Enhancement: text kept for assistive tech but visually hidden so the
+          control reads as a compact round icon button. */}
+      <span className="baharoute-recenter-control__text baharoute-visually-hidden">
+        Recenter
+      </span>
     </button>
   );
 }

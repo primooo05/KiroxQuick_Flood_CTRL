@@ -49,9 +49,18 @@
   --baharoute-controls-top: auto;
   --baharoute-controls-right: var(--baharoute-control-inset);
   --baharoute-controls-bottom: var(--baharoute-control-inset);
-  --baharoute-controls-left: var(--baharoute-control-inset);
+  /* Enhancement: right-edge thumb column instead of a full-width strip. */
+  --baharoute-controls-left: auto;
   --baharoute-controls-max-height: 66vh;
-  --baharoute-controls-align: stretch;
+  --baharoute-controls-align: flex-end;
+
+  /* Enhancement: surface tokens for floating chrome. */
+  --baharoute-surface: #ffffff;
+  --baharoute-text: #1f2328;
+  --baharoute-text-muted: #5b6168;
+  --baharoute-border: rgba(31, 35, 40, 0.12);
+  --baharoute-radius: 12px;
+  --baharoute-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   --baharoute-controls-flex-direction: column;
 }
 
@@ -108,7 +117,8 @@ body,
 
   /* Keep the cluster within the lower two-thirds and scrollable if it grows. */
   max-height: var(--baharoute-controls-max-height);
-  overflow: auto;
+  /* Enhancement: visible so the layers popover is not clipped. */
+  overflow: visible;
 
   z-index: 2;
 
@@ -219,4 +229,364 @@ body,
   outline-offset: var(--baharoute-focus-ring-offset);
   box-shadow: 0 0 0 var(--baharoute-focus-ring-offset)
     var(--baharoute-focus-ring-color);
+}
+
+/* ============================================================================
+ * Enhancement: map UI/UX polish (floating chrome, layers panel, legend, popup)
+ * ========================================================================= */
+
+.baharoute-app {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--baharoute-text);
+}
+
+.baharoute-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* --- Brand pill (replaces the full-width header) ------------------------- */
+.baharoute-brand {
+  position: absolute;
+  top: calc(var(--baharoute-control-inset) + var(--baharoute-safe-top));
+  left: calc(var(--baharoute-control-inset) + var(--baharoute-safe-left));
+  z-index: 3;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--baharoute-surface);
+  border-radius: 999px;
+  box-shadow: var(--baharoute-shadow);
+  pointer-events: none;
+}
+.baharoute-brand__name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--baharoute-focus-ring-color);
+}
+.baharoute-brand__scope {
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+
+/* Demo badge sits just under the brand pill. */
+.baharoute-demo-badge {
+  position: absolute;
+  top: calc(var(--baharoute-control-inset) + var(--baharoute-safe-top) + 46px);
+  left: calc(var(--baharoute-control-inset) + var(--baharoute-safe-left));
+  z-index: 3;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7a4b00;
+  background: #fff4d6;
+  border: 1px solid #f0d58a;
+  border-radius: 999px;
+}
+
+/* --- Floating control buttons -------------------------------------------- */
+.baharoute-control-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--baharoute-surface);
+  border-radius: var(--baharoute-radius);
+  box-shadow: var(--baharoute-shadow);
+  overflow: hidden;
+}
+.baharoute-control-card > button + button {
+  border-top: 1px solid var(--baharoute-border);
+}
+.baharoute-control-card button,
+.baharoute-round-button {
+  width: var(--baharoute-touch-target);
+  height: var(--baharoute-touch-target);
+  padding: 0;
+  border: 0;
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.baharoute-round-button {
+  border-radius: var(--baharoute-radius);
+  box-shadow: var(--baharoute-shadow);
+}
+.baharoute-control-card .baharoute-round-button {
+  box-shadow: none;
+  border-radius: 0;
+}
+.baharoute-control-card button:hover,
+.baharoute-round-button:hover {
+  background: #f1f3f5;
+}
+.baharoute-round-button[aria-expanded='true'] {
+  color: var(--baharoute-focus-ring-color);
+}
+
+/* Location status message as a small toast next to the button. */
+.baharoute-location-control {
+  position: relative;
+}
+.baharoute-control-message {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: max-content;
+  max-width: 220px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--baharoute-text);
+  color: #fff;
+  border-radius: 8px;
+}
+
+.baharoute-icon-button {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--baharoute-text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.baharoute-icon-button:hover {
+  background: #f1f3f5;
+}
+
+/* --- Layers panel ---------------------------------------------------------- */
+.baharoute-layers {
+  position: relative;
+}
+.baharoute-layers__panel {
+  position: absolute;
+  right: calc(100% + 8px);
+  /* Enhancement fix: open downward from the button so the panel never
+     grows past the top of the viewport (controls sit top-right on desktop). */
+  top: 0;
+  width: 280px;
+  max-height: calc(100vh - 2 * var(--baharoute-control-inset));
+  overflow: auto;
+  padding: 12px;
+  background: var(--baharoute-surface);
+  border-radius: var(--baharoute-radius);
+  box-shadow: var(--baharoute-shadow);
+  box-sizing: border-box;
+}
+.baharoute-layers__panel[hidden] {
+  display: none;
+}
+.baharoute-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.baharoute-panel-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.baharoute-layer-item label {
+  min-height: var(--baharoute-touch-target);
+  font-size: 14px;
+}
+.baharoute-layer-item + .baharoute-layer-item {
+  border-top: 1px solid var(--baharoute-border);
+}
+.baharoute-layer-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--baharoute-focus-ring-color);
+}
+.baharoute-layer-label {
+  flex: 1 1 auto;
+}
+.baharoute-layer-state {
+  font-size: 12px;
+  color: var(--baharoute-text-muted);
+}
+
+/* --- Legend ---------------------------------------------------------------- */
+.baharoute-legend {
+  position: absolute;
+  left: calc(var(--baharoute-control-inset) + var(--baharoute-safe-left));
+  bottom: calc(var(--baharoute-control-inset) + var(--baharoute-safe-bottom) + 24px);
+  z-index: 2;
+  max-width: 240px;
+  /* Enhancement fix: expanded legend stays below the brand pill/demo badge. */
+  max-height: calc(100vh - 160px);
+  overflow: auto;
+  background: var(--baharoute-surface);
+  border-radius: var(--baharoute-radius);
+  box-shadow: var(--baharoute-shadow);
+  font-size: 13px;
+}
+.baharoute-legend__toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--baharoute-touch-target);
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--baharoute-radius);
+  font: inherit;
+  font-weight: 600;
+  color: var(--baharoute-text);
+  cursor: pointer;
+}
+.baharoute-legend__body {
+  padding: 0 12px 12px;
+}
+.baharoute-legend__body[hidden] {
+  display: none;
+}
+.baharoute-legend__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.baharoute-legend__item {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: 8px;
+  align-items: center;
+}
+.baharoute-legend__swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  opacity: 0.75;
+}
+.baharoute-legend__swatch--hatched {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.7) 0 2px,
+    transparent 2px 5px
+  );
+}
+.baharoute-legend__hint {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-legend__note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--baharoute-text-muted);
+}
+
+/* --- Popup: bottom sheet on mobile, floating card on desktop -------------- */
+.baharoute-popup-host {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 16px 16px calc(16px + var(--baharoute-safe-bottom));
+  background: var(--baharoute-surface);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
+  box-sizing: border-box;
+}
+.baharoute-popup-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+.baharoute-flood-popup__title {
+  margin: 0 40px 8px 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+.baharoute-flood-popup__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #f1f3f5;
+  border-radius: 999px;
+}
+.baharoute-flood-popup__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.baharoute-flood-popup__fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+.baharoute-flood-popup__fields dt {
+  color: var(--baharoute-text-muted);
+}
+.baharoute-flood-popup__fields dd {
+  margin: 0;
+}
+.baharoute-flood-popup .baharoute-disclaimer,
+.baharoute-flood-popup [role='note'] {
+  margin: 0;
+  font-size: 12px;
+  color: var(--baharoute-text-muted);
+}
+
+@media (min-width: 768px) {
+  .baharoute-popup-host {
+    left: calc(var(--baharoute-control-inset) + var(--baharoute-safe-left));
+    right: auto;
+    top: calc(var(--baharoute-control-inset) + var(--baharoute-safe-top) + 80px);
+    bottom: auto;
+    width: 320px;
+    max-height: calc(100vh - 200px);
+    border-radius: var(--baharoute-radius);
+    box-shadow: var(--baharoute-shadow);
+  }
+  .baharoute-legend {
+    bottom: calc(var(--baharoute-control-inset) + var(--baharoute-safe-bottom) + 24px);
+  }
+}
+
+@media (max-width: 767px) {
+  /* Layers panel becomes a bottom sheet on small screens. */
+  .baharoute-layers__panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    padding-bottom: calc(12px + var(--baharoute-safe-bottom));
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
+    z-index: 5;
+  }
 }

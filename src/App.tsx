@@ -43,8 +43,11 @@ export default function App({
 
   return (
     <main className="baharoute-app">
-      <header className="baharoute-header">
-        <h1>BahaRoute</h1>
+      {/* Enhancement: restrained floating brand pill instead of a full-width
+          header, so the map fills the screen (navigation spec Req 3). */}
+      <header className="baharoute-header baharoute-brand">
+        <h1 className="baharoute-brand__name">BahaRoute</h1>
+        <span className="baharoute-brand__scope">Metro Manila</span>
       </header>
 
       {resolvedConfig.hasTileKey ? (
