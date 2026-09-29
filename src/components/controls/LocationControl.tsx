@@ -27,8 +27,19 @@ export type RequestLocationFn = () => Promise<LocationResult>;
 
 export interface LocationControlProps {
   /**
+   * When provided, the button DELEGATES to the parent instead of requesting
+   * geolocation itself: it calls `onActivate` and renders no internal status
+   * message. This is how the location arrow participates in the app's unified,
+   * consent-gated origin flow (BahaRoute consent → geolocation → route-planning
+   * origin → 3D preview / recenter). The parent owns messaging (the privacy
+   * status line) and the camera. When omitted, the control keeps its legacy,
+   * self-contained behavior below.
+   */
+  onActivate?: () => void;
+  /**
    * Injectable location request. Defaults to the real geolocation service with
-   * its 20s timeout (Req 6.5). Tests supply a fake to drive each branch.
+   * its 20s timeout (Req 6.5). Tests supply a fake to drive each branch. Ignored
+   * when {@link onActivate} is provided.
    */
   requestLocation?: RequestLocationFn;
   /**
@@ -61,6 +72,7 @@ const noop = (): void => undefined;
  * it only reports results to the parent and renders a status message.
  */
 export function LocationControl({
+  onActivate,
   requestLocation = defaultRequestLocation,
   onLocated = noop,
   onOutsideNcr = noop,
@@ -73,6 +85,12 @@ export function LocationControl({
   const [busy, setBusy] = useState(false);
 
   const handleActivate = useCallback(async () => {
+    // Delegated mode: hand off to the parent's consent-gated origin flow. The
+    // control requests no geolocation and shows no message of its own.
+    if (onActivate) {
+      onActivate();
+      return;
+    }
     if (busy) return;
     setBusy(true);
     setMessage(null);
@@ -118,7 +136,7 @@ export function LocationControl({
     } finally {
       setBusy(false);
     }
-  }, [busy, requestLocation, onLocated, onOutsideNcr, onStatus]);
+  }, [onActivate, busy, requestLocation, onLocated, onOutsideNcr, onStatus]);
 
   return (
     <div className="baharoute-location-control">

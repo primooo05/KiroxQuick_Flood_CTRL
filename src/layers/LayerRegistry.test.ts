@@ -126,9 +126,10 @@ describe('LayerRegistry fixed z-order insertion (Req 9.1, 9.4)', () => {
     // Top → bottom (render priority) is the reverse and must match the design
     // order for the four layers added here (cityFloodSummary is not added in
     // this test, so it is filtered out of the comparison).
+    const addedIds = new Set(Object.keys(allDefs()));
     const topToBottom = [...appPart].reverse();
     expect(topToBottom).toEqual(
-      APP_LAYER_ORDER.filter((id) => id !== 'cityFloodSummary'),
+      APP_LAYER_ORDER.filter((id) => addedIds.has(id)),
     );
   });
 
@@ -213,10 +214,11 @@ describe('LayerRegistry fixed z-order insertion (Req 9.1, 9.4)', () => {
     registry.addAppLayers(allDefs());
 
     // The resulting relative order among app layers is still correct (only the
-    // four layers in allDefs() were added; cityFloodSummary is excluded).
+    // four layers in allDefs() were added).
+    const addedIds = new Set(Object.keys(allDefs()));
     const topToBottom = [...map.stack].reverse();
     expect(topToBottom).toEqual(
-      APP_LAYER_ORDER.filter((id) => id !== 'cityFloodSummary'),
+      APP_LAYER_ORDER.filter((id) => addedIds.has(id)),
     );
   });
 

@@ -42,18 +42,22 @@ describe('RerouteOffer', () => {
     expect(dialog).toHaveTextContent('Reported Flooding ahead');
     expect(dialog).toHaveTextContent('unconfirmed');
     expect(dialog).not.toHaveTextContent('missed');
+    // Honest wording: never "safe"/"clear"/"no risk".
     expect(dialog.textContent ?? '').not.toMatch(/\bsafe\b|\bclear\b|no risk/i);
+    // Risk-aware wording: a lower-risk alternative vs. the recommended route.
+    expect(dialog).toHaveTextContent('Lower-risk alternative');
+    expect(dialog).toHaveTextContent('Keep recommended route');
 
-    await user.click(screen.getByRole('button', { name: /Reroute/ }));
+    await user.click(screen.getByRole('button', { name: /Lower-risk alternative/ }));
     expect(onReroute).toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: /Keep current route/ }));
+    await user.click(screen.getByRole('button', { name: /Keep recommended route/ }));
     expect(onKeep).toHaveBeenCalled();
   });
 
-  it('tells the driver when an earlier reroute was missed', () => {
+  it('tells the driver when an earlier alternative was missed', () => {
     renderOffer(true);
     expect(screen.getByRole('alertdialog')).toHaveTextContent(
-      'Earlier reroute missed. New route available.',
+      'Earlier alternative missed. New alternative available.',
     );
   });
 });

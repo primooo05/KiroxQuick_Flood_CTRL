@@ -29,6 +29,7 @@
  */
 
 import type { FloodState, SusceptibilityLevel } from '../../types/flood';
+import type { CurrentRiskLevel } from '../../types/risk';
 
 /** HSL components for a color. Hue in degrees [0,360), saturation/lightness in %. */
 export interface Hsl {
@@ -210,13 +211,44 @@ export const FLOOD_STATE_COLORS: Record<FloodState, ColorToken> = {
 } as const;
 
 /**
+ * CurrentRiskLevel → reserved display color (Req 6, current barangay flood
+ * risk). These are the CURRENT-CONDITION risk colors, distinct from the
+ * historical SUSCEPTIBILITY_COLORS. They form an escalating ramp:
+ *
+ *   LOW               → near-neutral green-grey (current, low concern; NOT a
+ *                       "safe" claim — GRAY/LOW absence of fill never means safe)
+ *   ELEVATED          → amber/yellow
+ *   HIGH              → orange
+ *   LIKELY_FLOODING   → red
+ *   REPORTED_FLOODING → deep red (community-reported active flooding)
+ *   CONFIRMED_NOT_PASSABLE → dark maroon (official confirmation only)
+ *
+ * The colored levels are all saturated (> 30%); LOW is intentionally
+ * near-neutral (a calm base state) and excluded from the >30% reserved list.
+ */
+export const CURRENT_RISK_COLORS: Record<CurrentRiskLevel, ColorToken> = {
+  // Data-quality states: neutral greys, low saturation (excluded from the
+  // reserved >30% list). These must never read as a severity level.
+  UNKNOWN: token('currentRiskUnknown', '#b5b8bd'),
+  STALE: token('currentRiskStale', '#9aa0a6'),
+  // Classified severity ramp: muted green → yellow → orange → reds.
+  LOW: token('currentRiskLow', '#4c9a6b'),
+  ELEVATED: token('currentRiskElevated', '#f6c445'),
+  HIGH: token('currentRiskHigh', '#ef8a3c'),
+  LIKELY_FLOODING: token('currentRiskLikely', '#e0443e'),
+  REPORTED_FLOODING: token('currentRiskReported', '#b71c1c'),
+  CONFIRMED_NOT_PASSABLE: token('currentRiskNotPassable', '#7a0016'),
+} as const;
+
+/**
  * A single flat list of the reserved (saturated) flood tokens, so the
  * disjointness / saturation check can iterate them. Every entry here MUST have
  * `hsl.s > MAX_BASE_SATURATION`.
  *
- * Note: the near-neutral GRAY flood-state color is intentionally excluded from
- * this list because it is not a saturated color; it is still reserved for flood
- * use and is never applied to base features.
+ * Note: the near-neutral GRAY flood-state color and the near-neutral current-
+ * risk LOW color are intentionally excluded from this list because they are not
+ * saturated; they are still reserved for flood use and never applied to base
+ * features.
  */
 export const RESERVED_COLOR_TOKENS: readonly ColorToken[] = [
   ...Object.values(SUSCEPTIBILITY_COLORS),
@@ -224,4 +256,9 @@ export const RESERVED_COLOR_TOKENS: readonly ColorToken[] = [
   FLOOD_STATE_COLORS.ORANGE,
   FLOOD_STATE_COLORS.YELLOW,
   FLOOD_STATE_COLORS.GREEN,
+  CURRENT_RISK_COLORS.ELEVATED,
+  CURRENT_RISK_COLORS.HIGH,
+  CURRENT_RISK_COLORS.LIKELY_FLOODING,
+  CURRENT_RISK_COLORS.REPORTED_FLOODING,
+  CURRENT_RISK_COLORS.CONFIRMED_NOT_PASSABLE,
 ];

@@ -248,11 +248,15 @@ describe('installFloodSusceptibility registration (Req 9.1, 9.4)', () => {
 
     // The app subset order matches the design's fixed order for the layers
     // added here (cityFloodSummary is not installed in this test).
-    const appPart = map.stack.filter((id) =>
-      (APP_LAYER_ORDER as readonly string[]).includes(id),
-    );
+    const added = new Set([
+      'floodReports',
+      'routeHighlights',
+      'roadFloodConditionSegments',
+      'floodSusceptibility',
+    ]);
+    const appPart = map.stack.filter((id) => added.has(id));
     expect([...appPart].reverse()).toEqual(
-      APP_LAYER_ORDER.filter((id) => id !== 'cityFloodSummary'),
+      APP_LAYER_ORDER.filter((id) => added.has(id)),
     );
   });
 

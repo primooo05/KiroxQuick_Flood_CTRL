@@ -14,6 +14,7 @@ import { LoadingIndicator } from './LoadingIndicator';
 import { ConfigIncomplete } from './ConfigIncomplete';
 import { ErrorMessage } from './ErrorMessage';
 import { DemoDataBadge } from './DemoDataBadge';
+import { CoverageBadge } from './CoverageBadge';
 import { Disclaimer } from './Disclaimer';
 import { FloodPopup } from './FloodPopup';
 import { floodStateLabel } from '../../layers/visualMapping';
@@ -109,6 +110,15 @@ describe('DemoDataBadge', () => {
     expect(
       screen.getByRole('img', { name: 'Sample data' }),
     ).toHaveTextContent('Sample data');
+  });
+});
+
+describe('CoverageBadge', () => {
+  it('states the NCR-only coverage scope', () => {
+    render(<CoverageBadge />);
+    const badge = screen.getByTestId('coverage-badge');
+    expect(badge).toHaveTextContent(/Metro Manila \/ NCR/i);
+    expect(badge).toHaveTextContent(/Coverage/i);
   });
 });
 

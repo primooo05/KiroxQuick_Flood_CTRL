@@ -110,6 +110,29 @@ describe('LocationControl', () => {
     expect(await screen.findByText(LOCATION_MESSAGES.timeout)).toBeInTheDocument();
   });
 
+  it('delegated mode: calls onActivate and never requests geolocation itself', async () => {
+    const onActivate = vi.fn();
+    const requestLocation = fakeRequest({ status: 'granted', ...IN_NCR });
+    const onLocated = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <LocationControl
+        onActivate={onActivate}
+        requestLocation={requestLocation}
+        onLocated={onLocated}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Show my location' }));
+
+    // Delegates to the parent; no direct geolocation, no own status message.
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(requestLocation).not.toHaveBeenCalled();
+    expect(onLocated).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('location-message')).not.toBeInTheDocument();
+  });
+
   it('does not use any "safe"/score language in its messages (Req 13)', () => {
     const banned = /safe|clear|no risk|score/i;
     for (const message of Object.values(LOCATION_MESSAGES)) {

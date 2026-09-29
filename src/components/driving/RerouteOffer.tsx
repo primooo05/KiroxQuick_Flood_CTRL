@@ -14,6 +14,7 @@ import { FLOOD_STATE_COLORS } from '../../map/basemap/colorTokens';
 import type { DriveHazard } from '../../data/fixtures/driveHazards';
 import { formatDistance } from '../../simulation/navigation';
 import { formatRerouteDelta, type RerouteOffer as Offer } from '../../simulation/reroute';
+import { rerouteReason, routingStanceForHazard } from '../../simulation/routingPolicy';
 
 export interface RerouteOfferProps {
   offer: Offer;
@@ -39,10 +40,11 @@ export function RerouteOffer({ offer, hazard, toHazardM, onReroute, onKeep }: Re
       <p id="baharoute-reroute-desc" className="baharoute-reroute__desc">
         {offer.isRetry && (
           <strong className="baharoute-reroute__retry">
-            Earlier reroute missed. New route available.{' '}
+            Earlier alternative missed. New alternative available.{' '}
           </strong>
         )}
-        On {hazard.street}. Demo report, unconfirmed.
+        {rerouteReason(routingStanceForHazard(hazard.state), hazard.street)} Demo
+        report, unconfirmed.
       </p>
       <div role="group" aria-label="Route options" className="baharoute-reroute__options">
         <button
@@ -50,8 +52,8 @@ export function RerouteOffer({ offer, hazard, toHazardM, onReroute, onKeep }: Re
           className="baharoute-reroute__option baharoute-reroute__option--primary baharoute-focus-ring"
           onClick={onReroute}
         >
-          <strong>Reroute</strong>
-          <span>Avoids reported flooding · {formatRerouteDelta(offer)}</span>
+          <strong>Lower-risk alternative</strong>
+          <span>Avoids the flood-risk area · {formatRerouteDelta(offer)}</span>
           <span>Turn-off in {formatDistance(offer.toBranchM)}</span>
         </button>
         <button
@@ -59,8 +61,8 @@ export function RerouteOffer({ offer, hazard, toHazardM, onReroute, onKeep }: Re
           className="baharoute-reroute__option baharoute-focus-ring"
           onClick={onKeep}
         >
-          <strong>Keep current route</strong>
-          <span>Passes the reported flooding</span>
+          <strong>Keep recommended route</strong>
+          <span>Passes the flood-risk area</span>
         </button>
       </div>
     </section>

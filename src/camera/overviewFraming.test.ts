@@ -182,14 +182,14 @@ describe('responsive framing constants (Req 1.2–1.6)', () => {
 
   it('exposes the tuned desktop product center + zoom (reference framing)', () => {
     // The reference Metro Manila center used by the desktop product framing.
-    expect(OVERVIEW_DESKTOP_CENTER).toEqual([120.9842, 14.5995]);
+    expect(OVERVIEW_DESKTOP_CENTER).toEqual([121.02, 14.57]);
     // The reference center must sit INSIDE the NCR (Req 1.2).
     expect(
       isWithinMetroManila(OVERVIEW_DESKTOP_CENTER[0], OVERVIEW_DESKTOP_CENTER[1]),
     ).toBe(true);
-    // The reference product zoom (~11) is inside the product band and the
+    // The reference product zoom (~11.4) is inside the product band and the
     // style bounds.
-    expect(OVERVIEW_DESKTOP_ZOOM).toBe(11);
+    expect(OVERVIEW_DESKTOP_ZOOM).toBe(11.4);
     expect(OVERVIEW_DESKTOP_ZOOM).toBeGreaterThanOrEqual(
       OVERVIEW_DESKTOP_ZOOM_RANGE.min,
     );
@@ -216,8 +216,9 @@ describe('responsive framing constants (Req 1.2–1.6)', () => {
       METRO_MANILA_BOUNDS.north - METRO_MANILA_BOUNDS.south,
       10,
     );
-    // Sanity: ~0.38° between Muntinlupa (south) and Valenzuela/Caloocan (north).
-    expect(NCR_LAT_SPAN_DEG).toBeCloseTo(0.38, 10);
+    // Sanity: ~0.46° between Muntinlupa (south) and Valenzuela/Caloocan (north)
+    // — the framing box fully contains the real NCR geometry (no N/S clipping).
+    expect(NCR_LAT_SPAN_DEG).toBeCloseTo(0.46, 10);
   });
 
   it('projects the latitude span to a slightly LARGER Mercator degrees-equivalent', () => {

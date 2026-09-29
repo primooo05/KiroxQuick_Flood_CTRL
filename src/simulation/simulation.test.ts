@@ -3,6 +3,7 @@ import {
   bearingDegrees,
   distanceMeters,
   measureRoute,
+  nearestAlong,
   outsideRadiusMask,
   pointAlong,
   type LngLat,
@@ -91,6 +92,37 @@ describe('DriveSimulator', () => {
     step(1_000_000);
     expect(onFinish).toHaveBeenCalledTimes(1);
     expect(sim.running).toBe(false);
+  });
+
+  it('keeps every simulated position ON the active route LineString', () => {
+    // Route-following invariant: the interpolated position at each frame must
+    // lie on the same geometry the map draws (offset ~0), so the vehicle never
+    // diverges from the blue route line / cuts across buildings.
+    const { scheduler, step } = manualScheduler();
+    const measured = measureRoute(PITX_TO_MOA_ROUTE);
+    const frames: DriveFrame[] = [];
+    const sim = new DriveSimulator({
+      route: PITX_TO_MOA_ROUTE,
+      onFrame: (f) => frames.push(f),
+      onFinish: () => undefined,
+      speedMps: 10,
+      playbackRate: 50, // advance quickly across the whole route
+      scheduler,
+    });
+    sim.start();
+    step(0);
+    // Step forward in 1 s ticks until the route completes.
+    for (let t = 1000; t <= 300_000 && sim.running; t += 1000) step(t);
+    expect(frames.length).toBeGreaterThan(5);
+    for (const f of frames) {
+      const { offM } = nearestAlong(measured, f.position);
+      // Interpolation is exact on segments; allow a sub-meter numeric tolerance.
+      expect(offM).toBeLessThan(1);
+    }
+    // Arrival snaps to the final route coordinate (no overshoot).
+    const last = frames[frames.length - 1];
+    const end = PITX_TO_MOA_ROUTE[PITX_TO_MOA_ROUTE.length - 1];
+    expect(distanceMeters(last.position, end)).toBeLessThan(1);
   });
 
   it('stop() halts playback without firing onFinish', () => {

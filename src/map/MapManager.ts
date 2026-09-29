@@ -28,13 +28,22 @@ import {
   STYLE_MAX_ZOOM,
   STYLE_MIN_ZOOM,
 } from './basemap/BahaRouteStyle';
-import { METRO_MANILA_EXTENT } from './metroManilaExtent';
+import {
+  METRO_MANILA_EXTENT,
+  METRO_MANILA_MAX_BOUNDS,
+  METRO_MANILA_NEARBY_MAX_BOUNDS,
+} from './metroManilaExtent';
 import { metroManilaCityBoundaries } from '../data/geojson/metroManilaCityBoundaries';
 import {
   buildMetroManilaClipMask,
   NCR_CLIP_LAYER_ID,
   NCR_CLIP_SOURCE_ID,
 } from './metroManilaClipMask';
+import {
+  installNcrOutsideMask,
+  NCR_OUTSIDE_MASK_LAYER_ID,
+  type MaskMapAdapter,
+} from './ncrOutsideMask';
 import { distanceMeters, outsideRadiusMask } from '../simulation/routeGeometry';
 import {
   OVERVIEW_BOUNDS,
@@ -59,10 +68,31 @@ const INITIAL_CENTER: [number, number] = OVERVIEW_DESKTOP_CENTER;
  * recognizable scale; sits inside the style bounds `[STYLE_MIN_ZOOM,
  * STYLE_MAX_ZOOM]`. frameOverview() applies the responsive framing on load.
  */
-const INITIAL_ZOOM = 11;
+const INITIAL_ZOOM = 11.4;
 
 /** Camera pitch (degrees) used while the 3D view is on. */
 export const VIEW_3D_PITCH = 60;
+
+// --- Origin preview (trip planning) ----------------------------------------
+/** Street/neighborhood zoom for the 3D origin preview (keeps road context). */
+export const ORIGIN_PREVIEW_ZOOM = 16;
+/** Moderate 3D pitch for the origin preview (45–60°, not the steep drive cam). */
+export const ORIGIN_PREVIEW_PITCH = 55;
+/** Origin-preview fly duration (ms). */
+export const ORIGIN_PREVIEW_DURATION_MS = 1200;
+/** Padding (px) when framing the origin + destination together. */
+export const PLAN_FRAME_PADDING = 96;
+/** Pitch used when framing both trip points (mild 3D, keeps overview legible). */
+export const PLAN_FRAME_PITCH = 30;
+
+/**
+ * The Map Context presentation mode:
+ *  - `ncr-only` (default): strict NCR-only — outside masked, external labels
+ *    suppressed, camera tightly constrained.
+ *  - `nearby`: surrounding provinces shown for orientation only (thematic data
+ *    stays NCR-only regardless).
+ */
+export type MapContext = 'ncr-only' | 'nearby';
 
 /** Duration (ms) of the 2D ↔ 3D camera tilt animation. */
 const VIEW_MODE_TRANSITION_MS = 800;
@@ -97,6 +127,12 @@ export interface DriveMarker {
   position: [number, number];
   color: string;
 }
+
+/** One candidate route for the pre-drive preview (id + ordered [lng,lat]). */
+export interface PreviewRoute {
+  id: string;
+  geometry: ReadonlyArray<[number, number]>;
+}
 /** Move the radius clip only after the vehicle travels this far. */
 export const DRIVE_RADIUS_UPDATE_M = 150;
 /** Per-frame bearing smoothing factor (0..1). */
@@ -106,6 +142,19 @@ const DRIVE_COLOR = '#1a56db';
 
 const DRIVE_ROUTE_SOURCE = 'drive-route';
 const DRIVE_ROUTE_LAYER = 'drive-route-line';
+
+// --- Route preview (pre-drive planning) ------------------------------------
+/** Source/layers for the route-preview lines + origin/destination markers. */
+const PREVIEW_ALT_SOURCE = 'route-preview-alt';
+const PREVIEW_ALT_LAYER = 'route-preview-alt-line';
+const PREVIEW_SEL_SOURCE = 'route-preview-selected';
+const PREVIEW_SEL_LAYER = 'route-preview-selected-line';
+const PREVIEW_ENDS_SOURCE = 'route-preview-ends';
+const PREVIEW_ENDS_LAYER = 'route-preview-ends-dot';
+/** Accent for the selected/recommended preview route (matches drive accent). */
+const PREVIEW_SELECTED_COLOR = '#1a56db';
+/** Muted color for alternative preview routes. */
+const PREVIEW_ALT_COLOR = '#9aa4b2';
 const DRIVE_CAR_SOURCE = 'drive-car';
 const DRIVE_CAR_LAYER = 'drive-car-dot';
 const DRIVE_RADIUS_SOURCE = 'drive-3d-radius-mask';
@@ -149,6 +198,7 @@ export interface MinimalMap {
   easeTo?(options: unknown): unknown;
   setPitch?(pitch: number): unknown;
   setBearing?(bearing: number): unknown;
+  getBearing?(): number;
   /**
    * Optional container accessor (the real Mapbox `Map` exposes `getContainer()`).
    * Used by {@link MapManager.frameOverview} to measure the viewport for the
@@ -163,6 +213,10 @@ export interface MinimalMap {
   addSource?(id: string, source: unknown): unknown;
   addLayer?(layer: unknown, beforeId?: string): unknown;
   getLayer?(id: string): unknown;
+  /** Optional layout-property setter (used to toggle the outside-NCR mask). */
+  setLayoutProperty?(layerId: string, name: string, value: unknown): unknown;
+  /** Optional camera pan constraint setter (used by the Map Context switch). */
+  setMaxBounds?(bounds: unknown): unknown;
   // Optional APIs for the drive simulation (camera follow + live sources).
   jumpTo?(options: unknown): unknown;
   getSource?(id: string): { setData?(data: unknown): unknown } | undefined;
@@ -190,6 +244,17 @@ export interface MapConstructorOptions {
   zoom: number;
   minZoom: number;
   maxZoom: number;
+  /**
+   * Camera pan constraint `[[west, south], [east, north]]` — the NCR-only
+   * presentation restricts panning to a padded box around Metro Manila.
+   */
+  maxBounds?: [[number, number], [number, number]];
+  /** Enable right-drag / keyboard bearing rotation (full 360°). */
+  dragRotate?: boolean;
+  /** Rotate the camera pitch together with bearing while rotating. */
+  pitchWithRotate?: boolean;
+  /** Enable two-finger touch rotate (and pinch-zoom rotate). */
+  touchZoomRotate?: boolean;
   /** The Mapbox access token, applied so mapbox-gl can fetch the style/tiles. */
   accessToken: string;
   /** Mapbox Standard import config, keyed by import id (e.g. `basemap`). */
@@ -242,8 +307,12 @@ const defaultMapFactory: MapFactory = (options) =>
     zoom: options.zoom,
     minZoom: options.minZoom,
     maxZoom: options.maxZoom,
+    maxBounds: options.maxBounds,
     accessToken: options.accessToken,
     config: options.config,
+    dragRotate: options.dragRotate,
+    pitchWithRotate: options.pitchWithRotate,
+    touchZoomRotate: options.touchZoomRotate,
   }) as unknown as MinimalMap;
 
 /**
@@ -272,8 +341,14 @@ export class MapManager {
   // Bound listeners retained so they can be removed on destroy.
   /** Whether the 3D view (tilt + Standard 3D objects) is currently on. */
   private view3D = false;
+  /** Current Map Context presentation mode. Defaults to "nearby". */
+  private mapContext: MapContext = 'nearby';
 
   private readonly handleLoad = (): void => {
+    // Paint the outside-NCR visual mask FIRST, then remove 3D outside NCR. The
+    // mask is added before onReady (before MapView installs any NCR layer), so
+    // every BahaRoute NCR layer added later renders on top of it (Req 2).
+    this.installNcrOutsideMask();
     this.installMetroManilaClip();
     this.settleReady();
   };
@@ -317,6 +392,15 @@ export class MapManager {
       zoom: INITIAL_ZOOM,
       minZoom: this.minZoom,
       maxZoom: this.maxZoom,
+      // NCR-only presentation: constrain panning to a PADDED box around Metro
+      // Manila so users cannot roam into the surrounding provinces, while the
+      // edge LGUs stay inspectable (padding in METRO_MANILA_MAX_BOUNDS).
+      maxBounds: METRO_MANILA_MAX_BOUNDS,
+      // Full 360° rotation, discoverable via the on-screen compass and usable by
+      // right-drag (desktop) / two-finger twist (touch).
+      dragRotate: true,
+      pitchWithRotate: true,
+      touchZoomRotate: true,
       accessToken,
       // Standard: faded theme, day light, 3D hidden until set3D(true).
       config: { [STANDARD_BASEMAP_IMPORT_ID]: { ...BAHAROUTE_STANDARD_CONFIG } },
@@ -370,6 +454,70 @@ export class MapManager {
   /** True while the 3D view is on. */
   is3D(): boolean {
     return this.view3D;
+  }
+
+  /**
+   * Switches the MAP CONTEXT presentation between the strict NCR-only view and
+   * the nearby-areas view. This is a PRESENTATION-ONLY switch: it changes the
+   * basemap label config, the outside-NCR visual mask, and the camera pan
+   * constraint. It NEVER touches thematic data — Flood Risk, Historical,
+   * Reports, Closures, and routing remain NCR-only regardless of context.
+   *
+   *  - `ncr-only` (default): outside-NCR mask visible, place/POI/transit labels
+   *    hidden, camera constrained tightly to NCR.
+   *  - `nearby`: mask hidden so surrounding Bulacan/Rizal/Cavite/Laguna context
+   *    shows, place labels restored for orientation, camera constraint relaxed
+   *    to the wider nearby box. NCR stays visually dominant via its own mask
+   *    boundary/label layers (unchanged) and the initial framing.
+   *
+   * Safe no-op before init / on fakes lacking the style APIs.
+   */
+  setMapContext(context: MapContext): void {
+    this.mapContext = context;
+    const map = this.map;
+    if (!map) return;
+    const nearby = context === 'nearby';
+
+    // 1) Basemap settlement/POI/transit labels: hidden in NCR-only, restored in
+    //    nearby mode. Road labels always stay on.
+    try {
+      map.setConfigProperty?.(STANDARD_BASEMAP_IMPORT_ID, 'showPlaceLabels', nearby);
+      map.setConfigProperty?.(
+        STANDARD_BASEMAP_IMPORT_ID,
+        'showPointOfInterestLabels',
+        nearby,
+      );
+      map.setConfigProperty?.(STANDARD_BASEMAP_IMPORT_ID, 'showTransitLabels', nearby);
+    } catch {
+      // Style not ready / not Standard: mask + bounds below still apply.
+    }
+
+    // 2) Outside-NCR opaque mask: shown in NCR-only, hidden in nearby mode.
+    try {
+      if (map.getLayer?.(NCR_OUTSIDE_MASK_LAYER_ID) !== undefined) {
+        map.setLayoutProperty?.(
+          NCR_OUTSIDE_MASK_LAYER_ID,
+          'visibility',
+          nearby ? 'none' : 'visible',
+        );
+      }
+    } catch {
+      // Mask not installed yet (e.g. fake map): safe to ignore.
+    }
+
+    // 3) Camera pan constraint: tight NCR box vs. the wider nearby box.
+    try {
+      map.setMaxBounds?.(
+        nearby ? METRO_MANILA_NEARBY_MAX_BOUNDS : METRO_MANILA_MAX_BOUNDS,
+      );
+    } catch {
+      // Fake map without setMaxBounds: safe to ignore.
+    }
+  }
+
+  /** The current Map Context presentation mode. */
+  getMapContext(): MapContext {
+    return this.mapContext;
   }
 
   // --- drive view (demo) ---------------------------------------------------
@@ -615,6 +763,262 @@ export class MapManager {
     this.map?.easeTo?.(options);
   }
 
+  /**
+   * Monotonic camera-intent token. Each planning camera move (overview, origin
+   * preview, both-points frame) bumps this; a move only runs if it still holds
+   * the latest token, so an older async transition can never override a newer
+   * requested state. Driver Mode uses its own per-frame `jumpTo` and is not
+   * gated by this token.
+   */
+  private cameraToken = 0;
+
+  /** Reserves and returns the next camera-intent token (see {@link cameraToken}). */
+  nextCameraToken(): number {
+    this.cameraToken += 1;
+    return this.cameraToken;
+  }
+
+  /**
+   * Smoothly focuses the map on a chosen ORIGIN for a 3D preview — center on the
+   * point, zoom to street/neighborhood level, and tilt to a moderate 3D pitch.
+   * This is an origin PREVIEW, not Driver Mode: no route-follow camera, no
+   * per-frame movement. 3D objects are enabled if the style supports them so
+   * buildings appear, while nearby roads stay visible. Bearing is left stable
+   * (north) unless a caller supplies one.
+   *
+   * Guarded by {@link cameraToken}: if a newer camera intent has been requested
+   * since `token` was reserved, this is a no-op (prevents stale overrides).
+   */
+  focusOrigin(
+    origin: [number, number],
+    token: number = this.nextCameraToken(),
+    bearing = 0,
+  ): void {
+    const map = this.map;
+    if (!map) return;
+    if (token !== this.cameraToken) return; // superseded by a newer intent
+    // Enable Standard 3D objects for the preview (best-effort).
+    try {
+      map.setConfigProperty?.(STANDARD_BASEMAP_IMPORT_ID, 'show3dObjects', true);
+    } catch {
+      // Not Standard / style not ready: the tilt below still applies.
+    }
+    this.view3D = true;
+    const options = {
+      center: origin,
+      zoom: ORIGIN_PREVIEW_ZOOM,
+      pitch: ORIGIN_PREVIEW_PITCH,
+      bearing,
+      duration: ORIGIN_PREVIEW_DURATION_MS,
+      essential: true,
+    };
+    if (typeof map.flyTo === 'function') map.flyTo(options);
+    else map.easeTo?.(options);
+  }
+
+  /**
+   * Frames both trip points (origin + destination) in the viewport with a mild
+   * 3D pitch — the route-planning camera after a destination is chosen. Returns
+   * from the close origin preview to a two-point overview. Not Driver Mode.
+   *
+   * Guarded by {@link cameraToken} like {@link focusOrigin}.
+   */
+  framePoints(
+    a: [number, number],
+    b: [number, number],
+    token: number = this.nextCameraToken(),
+  ): void {
+    const map = this.map;
+    if (!map) return;
+    if (token !== this.cameraToken) return;
+    const bounds: [[number, number], [number, number]] = [
+      [Math.min(a[0], b[0]), Math.min(a[1], b[1])],
+      [Math.max(a[0], b[0]), Math.max(a[1], b[1])],
+    ];
+    this.view3D = true;
+    try {
+      map.fitBounds(bounds, {
+        padding: PLAN_FRAME_PADDING,
+        pitch: PLAN_FRAME_PITCH,
+        duration: ORIGIN_PREVIEW_DURATION_MS,
+      });
+    } catch {
+      // Fake map / fitBounds unavailable: safe no-op.
+    }
+  }
+
+  // --- Route preview (pre-drive planning) ----------------------------------
+
+  /** True while route-preview overlays are installed. */
+  private routePreviewActive = false;
+
+  /** Draws a route line as a GeoJSON feature via a source's setData. */
+  private setPreviewLine(sourceId: string, geometries: ReadonlyArray<ReadonlyArray<[number, number]>>): void {
+    const features = geometries.map((coords) => ({
+      type: 'Feature' as const,
+      properties: {},
+      geometry: { type: 'LineString' as const, coordinates: coords as [number, number][] },
+    }));
+    this.map?.getSource?.(sourceId)?.setData?.({
+      type: 'FeatureCollection',
+      features,
+    });
+  }
+
+  /**
+   * Shows the PRE-DRIVE route preview: the selected/recommended route is drawn
+   * with strong emphasis, alternatives are drawn faded beneath it, and the
+   * origin/destination end dots are shown. All relevant route geometry is fit
+   * into the viewport at a MODERATE pitch (planning view — NOT the Driver Mode
+   * camera). Safe no-op on maps lacking the style APIs (tests). Idempotent:
+   * re-installs cleanly if called again.
+   *
+   * @param routes - Candidate routes (id + geometry).
+   * @param selectedId - Which route id is currently selected/recommended.
+   * @param ends - `[origin, destination]` end points for the markers.
+   */
+  showRoutePreview(
+    routes: ReadonlyArray<PreviewRoute>,
+    selectedId: string,
+    ends: [[number, number], [number, number]],
+  ): void {
+    const map = this.map;
+    if (!map || typeof map.addSource !== 'function' || typeof map.addLayer !== 'function') return;
+    this.clearRoutePreview();
+    if (routes.length === 0) return;
+    try {
+      // Alternatives first (drawn beneath), then the selected route on top.
+      map.addSource(PREVIEW_ALT_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer({
+        id: PREVIEW_ALT_LAYER,
+        type: 'line',
+        slot: 'middle',
+        source: PREVIEW_ALT_SOURCE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': PREVIEW_ALT_COLOR, 'line-width': 5, 'line-opacity': 0.45 },
+      });
+      map.addSource(PREVIEW_SEL_SOURCE, {
+        type: 'geojson',
+        data: { type: 'FeatureCollection', features: [] },
+      });
+      map.addLayer({
+        id: PREVIEW_SEL_LAYER,
+        type: 'line',
+        slot: 'middle',
+        source: PREVIEW_SEL_SOURCE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': PREVIEW_SELECTED_COLOR, 'line-width': 7, 'line-opacity': 0.95 },
+      });
+      map.addSource(PREVIEW_ENDS_SOURCE, {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: ends.map((p) => pointFeature(p)),
+        },
+      });
+      map.addLayer({
+        id: PREVIEW_ENDS_LAYER,
+        type: 'circle',
+        slot: 'top',
+        source: PREVIEW_ENDS_SOURCE,
+        paint: {
+          'circle-radius': 7,
+          'circle-color': PREVIEW_SELECTED_COLOR,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 3,
+        },
+      });
+      this.routePreviewActive = true;
+      this.updateRoutePreviewSelection(routes, selectedId);
+      this.frameRoutePreview(routes, ends);
+    } catch {
+      // Overlays are best-effort; planning still works via the cards.
+    }
+  }
+
+  /**
+   * Re-emphasizes the preview: the given route becomes the dominant line, the
+   * rest fade. Called when the user selects a different route card / line.
+   */
+  updateRoutePreviewSelection(routes: ReadonlyArray<PreviewRoute>, selectedId: string): void {
+    if (!this.routePreviewActive) return;
+    const selected = routes.find((r) => r.id === selectedId) ?? routes[0];
+    if (!selected) return;
+    const alternatives = routes.filter((r) => r.id !== selected.id);
+    try {
+      this.setPreviewLine(PREVIEW_SEL_SOURCE, [selected.geometry]);
+      this.setPreviewLine(
+        PREVIEW_ALT_SOURCE,
+        alternatives.map((r) => r.geometry),
+      );
+    } catch {
+      // Source missing (e.g. fake map): ignore.
+    }
+  }
+
+  /** Fits all preview route geometry + endpoints into view at a moderate pitch. */
+  private frameRoutePreview(
+    routes: ReadonlyArray<PreviewRoute>,
+    ends: [[number, number], [number, number]],
+  ): void {
+    const map = this.map;
+    if (!map) return;
+    let minLng = Infinity;
+    let minLat = Infinity;
+    let maxLng = -Infinity;
+    let maxLat = -Infinity;
+    const consider = (p: readonly [number, number]): void => {
+      minLng = Math.min(minLng, p[0]);
+      minLat = Math.min(minLat, p[1]);
+      maxLng = Math.max(maxLng, p[0]);
+      maxLat = Math.max(maxLat, p[1]);
+    };
+    for (const r of routes) for (const p of r.geometry) consider(p);
+    consider(ends[0]);
+    consider(ends[1]);
+    if (!Number.isFinite(minLng)) return;
+    try {
+      map.fitBounds(
+        [
+          [minLng, minLat],
+          [maxLng, maxLat],
+        ],
+        {
+          padding: PLAN_FRAME_PADDING,
+          pitch: PLAN_FRAME_PITCH,
+          duration: ORIGIN_PREVIEW_DURATION_MS,
+        },
+      );
+    } catch {
+      // fitBounds unavailable: safe no-op.
+    }
+  }
+
+  /** Removes the route-preview overlays (before Driver Mode or on cancel). */
+  clearRoutePreview(): void {
+    const map = this.map;
+    if (!map) return;
+    try {
+      for (const id of [PREVIEW_ENDS_LAYER, PREVIEW_SEL_LAYER, PREVIEW_ALT_LAYER]) {
+        if (map.getLayer?.(id)) map.removeLayer?.(id);
+      }
+      for (const id of [PREVIEW_ENDS_SOURCE, PREVIEW_SEL_SOURCE, PREVIEW_ALT_SOURCE]) {
+        if (map.getSource?.(id)) map.removeSource?.(id);
+      }
+    } catch {
+      // Best-effort cleanup.
+    }
+    this.routePreviewActive = false;
+  }
+
+  /** True while the route preview overlays are shown. */
+  isRoutePreviewActive(): boolean {
+    return this.routePreviewActive;
+  }
+
   /** Delegates to the underlying map's `setPitch`. Safe no-op if unavailable. */
   setPitch(pitch: number): void {
     this.map?.setPitch?.(pitch);
@@ -623,6 +1027,45 @@ export class MapManager {
   /** Delegates to the underlying map's `setBearing`. Safe no-op if unavailable. */
   setBearing(bearing: number): void {
     this.map?.setBearing?.(bearing);
+  }
+
+  /** The current map bearing in degrees [0, 360). 0 (north) when unavailable. */
+  getBearing(): number {
+    const raw = this.map?.getBearing?.() ?? 0;
+    return ((raw % 360) + 360) % 360;
+  }
+
+  /**
+   * Rotates the map by `deltaDeg` degrees (positive = clockwise) with a short
+   * animation, wrapping across the full 360° range. Used by the on-screen
+   * rotate/compass control. Safe no-op before init / on fakes lacking easeTo.
+   *
+   * @param deltaDeg - Signed rotation delta in degrees.
+   * @param durationMs - Animation duration (default 300ms).
+   */
+  rotateBy(deltaDeg: number, durationMs = 300): void {
+    const map = this.map;
+    if (!map) return;
+    const next = this.getBearing() + deltaDeg;
+    if (typeof map.easeTo === 'function') {
+      map.easeTo({ bearing: next, duration: durationMs });
+    } else {
+      map.setBearing?.(next);
+    }
+  }
+
+  /**
+   * Animates the map back to north (bearing 0). Used by the compass "reset
+   * north" affordance. Safe no-op before init / on fakes lacking easeTo.
+   */
+  resetNorth(durationMs = 300): void {
+    const map = this.map;
+    if (!map) return;
+    if (typeof map.easeTo === 'function') {
+      map.easeTo({ bearing: 0, duration: durationMs });
+    } else {
+      map.setBearing?.(0);
+    }
   }
 
   /**
@@ -779,6 +1222,25 @@ export class MapManager {
       });
     } catch {
       // Clip is an enhancement; the base map stays usable without it.
+    }
+  }
+
+  /**
+   * Adds the outside-NCR VISUAL mask: a single light-neutral fill covering
+   * everything outside the 17 LGUs so surrounding provinces/cities no longer
+   * compete with Metro Manila, while NCR roads/labels/coastline stay visible.
+   * Best-effort: skipped on fakes without style APIs; failure never blocks
+   * readiness. Added before any NCR layer so it never covers BahaRoute content
+   * and (being a plain fill with no registered handlers) never intercepts NCR
+   * feature clicks.
+   */
+  private installNcrOutsideMask(): void {
+    const map = this.map;
+    if (!map) return;
+    try {
+      installNcrOutsideMask(map as unknown as MaskMapAdapter);
+    } catch {
+      // Visual mask is an enhancement; the base map stays usable without it.
     }
   }
 

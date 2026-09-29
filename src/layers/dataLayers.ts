@@ -260,7 +260,7 @@ export const boundariesLayer: DataLayer<BoundaryFeature> = makeLayer({
 export const floodSusceptibilityLayer: DataLayer<FloodSusceptibility> =
   makeLayer({
     id: 'floodSusceptibility',
-    label: 'Flood susceptibility (modeled, demo)',
+    label: 'Baseline Flood Susceptibility (historical, demo)',
     defaultVisible: true,
     fixtures: floodSusceptibilityFixtures,
     isValid: isValidSusceptibility,
@@ -279,7 +279,7 @@ export const floodSusceptibilityLayer: DataLayer<FloodSusceptibility> =
 export const cityFloodSummaryLayer: DataLayer<CitySusceptibilitySummary> =
   makeLayer({
     id: 'cityFloodSummary',
-    label: 'City flood susceptibility (modeled)',
+    label: 'Baseline Flood Susceptibility — city summary (historical)',
     defaultVisible: true,
     fixtures: cityFloodSusceptibilityFixtures,
     isValid: isValidCitySusceptibility,
@@ -377,10 +377,12 @@ export const evacuationCentersLayer: DataLayer<EvacuationCenter> = makeLayer({
 });
 
 /**
- * All per-category DataLayers keyed by LayerId. `FixtureDataSource` reads this
- * registry so it always exposes exactly the seven layers.
+ * All FIXTURE-backed DataLayers keyed by LayerId. `FixtureDataSource` reads this
+ * registry. It is a Partial because some LayerIds (e.g. `barangayFloodRisk`,
+ * `officialClosures`) are app-managed live/derived layers, not fixture layers,
+ * and therefore have no entry here.
  */
-export const fixtureLayers: { readonly [K in LayerId]: DataLayer<unknown> } = {
+export const fixtureLayers: Partial<Record<LayerId, DataLayer<unknown>>> = {
   boundaries: boundariesLayer as DataLayer<unknown>,
   cityFloodSummary: cityFloodSummaryLayer as DataLayer<unknown>,
   floodSusceptibility: floodSusceptibilityLayer as DataLayer<unknown>,

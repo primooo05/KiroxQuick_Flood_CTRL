@@ -3,10 +3,12 @@
 
 export type LayerId =
   | 'boundaries'
+  | 'barangayFloodRisk'
   | 'cityFloodSummary'
   | 'floodSusceptibility'
   | 'floodReports'
   | 'communityReports'
+  | 'officialClosures'
   | 'routes'
   | 'routeFloodSegments'
   | 'evacuationCenters';
@@ -14,6 +16,8 @@ export type LayerId =
 export interface DataLayerMeta {
   id: LayerId;
   label: string; // human text for Layer_Control (Req 9.5)
+  /** Optional longer, more descriptive accessible name for assistive tech. */
+  ariaLabel?: string;
   isDemo: boolean; // drives the demo/fixture badge (Req 15.2)
   defaultVisible: boolean;
 }
