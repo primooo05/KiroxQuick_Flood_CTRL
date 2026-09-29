@@ -26,9 +26,23 @@
 import { useState, type CSSProperties } from 'react';
 import type { DataLayerMeta, LayerId } from '../../types/layer';
 
+/** A named group of layers (e.g. "Current" / "Reference"). */
+export interface LayerGroup {
+  /** Group heading text. */
+  title: string;
+  /** The layers in this group, in display order. */
+  layers: DataLayerMeta[];
+}
+
 export interface LayerControlProps {
   /** Every available Data_Layer, listed uniformly (Req 9.1, 9.4). */
   layers: DataLayerMeta[];
+  /**
+   * Optional grouped presentation (Phase 2, Req 5). When provided, the control
+   * renders labeled sections instead of one flat list. `layers` is still used
+   * for the empty-state check and as a fallback when `groups` is absent.
+   */
+  groups?: LayerGroup[];
   /**
    * Invoked when the user toggles a layer entry. The parent wires this to
    * LayerRegistry.setVisibility(id, visible) (Req 9.2).
@@ -39,6 +53,16 @@ export interface LayerControlProps {
    * absent from this map, the entry seeds its state from `meta.defaultVisible`.
    */
   initialVisibility?: Partial<Record<LayerId, boolean>>;
+  /**
+   * Optional compact status text per layer id (e.g. "⚠ unavailable" beside
+   * Flood Risk when its live source is down). Kept subtle; no fabricated data.
+   */
+  statusById?: Partial<Record<LayerId, string>>;
+  /**
+   * Optional neutral hint shown when no layer is enabled (empty map state),
+   * e.g. "Select a layer to explore flood conditions."
+   */
+  hint?: string;
   /** Optional extra class appended to the container for layout/positioning. */
   className?: string;
 }
@@ -73,15 +97,18 @@ function LayerToggle({
   meta,
   initialChecked,
   onToggle,
+  status,
 }: {
   meta: DataLayerMeta;
   initialChecked: boolean;
   onToggle: (id: LayerId, visible: boolean) => void;
+  status?: string;
 }) {
   const [checked, setChecked] = useState(initialChecked);
   const checkboxId = `baharoute-layer-toggle-${meta.id}`;
-  // Non-color state cue: an explicit "On"/"Off" text alongside the checkbox,
-  // so the on/off state is perceivable without relying on color (Req 9.5, 11.4).
+  // The visible UI no longer shows redundant "On"/"Off" text (Phase 2, Req 5) —
+  // the native checkbox conveys state. We keep the state as VISUALLY-HIDDEN text
+  // so it remains available to assistive tech (non-color cue, Req 11.4).
   const stateText = checked ? 'On' : 'Off';
 
   return (
@@ -92,6 +119,9 @@ function LayerToggle({
           type="checkbox"
           className="baharoute-layer-checkbox baharoute-focus-ring"
           data-testid={`layer-checkbox-${meta.id}`}
+          // Prefer the longer descriptive name for assistive tech; the visible
+          // label can be shorter (Phase 3, Req 7).
+          aria-label={meta.ariaLabel ?? meta.label}
           checked={checked}
           onChange={(event) => {
             const next = event.target.checked;
@@ -100,7 +130,18 @@ function LayerToggle({
           }}
         />
         <span className="baharoute-layer-label">{meta.label}</span>
-        <span className="baharoute-layer-state" data-testid={`layer-state-${meta.id}`}>
+        {status && (
+          <span
+            className="baharoute-layer-status"
+            data-testid={`layer-status-note-${meta.id}`}
+          >
+            {status}
+          </span>
+        )}
+        <span
+          className="baharoute-visually-hidden"
+          data-testid={`layer-state-${meta.id}`}
+        >
           {stateText}
         </span>
       </label>
@@ -114,13 +155,30 @@ function LayerToggle({
  */
 export function LayerControl({
   layers,
+  groups,
   onToggle,
   initialVisibility,
+  statusById,
+  hint,
   className,
 }: LayerControlProps) {
   const containerClass = className
     ? `baharoute-layer-control ${className}`
     : 'baharoute-layer-control';
+
+  const renderList = (items: DataLayerMeta[]) => (
+    <ul className="baharoute-layer-list" style={listStyle}>
+      {items.map((meta) => (
+        <LayerToggle
+          key={meta.id}
+          meta={meta}
+          initialChecked={initialCheckedFor(meta, initialVisibility)}
+          onToggle={onToggle}
+          status={statusById?.[meta.id]}
+        />
+      ))}
+    </ul>
+  );
 
   return (
     <div
@@ -134,17 +192,24 @@ export function LayerControl({
         <p className="baharoute-layer-empty" data-testid="layer-control-empty">
           No layers
         </p>
+      ) : groups && groups.length > 0 ? (
+        groups.map((group) => (
+          <section
+            key={group.title}
+            className="baharoute-layer-group"
+            data-testid={`layer-group-${group.title.toLowerCase()}`}
+          >
+            <h3 className="baharoute-layer-group__title">{group.title}</h3>
+            {renderList(group.layers)}
+          </section>
+        ))
       ) : (
-        <ul className="baharoute-layer-list" style={listStyle}>
-          {layers.map((meta) => (
-            <LayerToggle
-              key={meta.id}
-              meta={meta}
-              initialChecked={initialCheckedFor(meta, initialVisibility)}
-              onToggle={onToggle}
-            />
-          ))}
-        </ul>
+        renderList(layers)
+      )}
+      {hint && (
+        <p className="baharoute-layer-hint" data-testid="layer-control-hint">
+          {hint}
+        </p>
       )}
     </div>
   );

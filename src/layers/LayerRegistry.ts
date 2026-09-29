@@ -96,9 +96,12 @@ type Visibility = 'visible' | 'none';
  * and current-condition reports always read on top of the city summary.
  */
 export const APP_LAYER_ORDER = [
+  'officialClosures',
   'floodReports',
+  'communityReports',
   'routeHighlights',
   'roadFloodConditionSegments',
+  'barangayFloodRisk',
   'floodSusceptibility',
   'cityFloodSummary',
 ] as const;

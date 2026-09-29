@@ -21,12 +21,13 @@ import { METRO_MANILA_BOUNDS } from '../map/metroManilaExtent';
 /**
  * Pixels of padding passed to `fitBounds` for the overview framing.
  *
- * A small padding keeps the NCR filling the majority of the usable viewport
- * (Req 1.2) while leaving a thin band of natural edge context so the map does
- * not read as hard-clipped at the NCR boundary (Req 1.6). Kept modest (24px)
- * so Metro Manila stays dominant rather than shrinking into the middle.
+ * A tight padding so the NCR fills MOST of the viewport — BahaRoute is
+ * NCR-only, so we intentionally hug the Metro Manila extent rather than leaving
+ * a wide margin. The outside-NCR opaque mask covers the periphery anyway, so
+ * no "edge context" band is needed. Small but non-zero so the outermost cities
+ * (Valenzuela, Muntinlupa) never touch the exact viewport border.
  */
-export const OVERVIEW_FIT_PADDING = 24;
+export const OVERVIEW_FIT_PADDING = 12;
 
 /**
  * Default animation duration (ms) for the overview `fitBounds`.
@@ -162,15 +163,15 @@ export function overviewFitOptions(): { padding: number; duration: number } {
  * the NCR extent (verified with `isWithinMetroManila` in the tests), so the
  * desktop overview center is always within Metro Manila (Req 1.2).
  */
-export const OVERVIEW_DESKTOP_CENTER: [number, number] = [120.9842, 14.5995];
+export const OVERVIEW_DESKTOP_CENTER: [number, number] = [121.02, 14.57];
 
 /**
- * The tuned reference product ZOOM for the desktop overview framing. At ~11 the
- * NCR fills most of a typical desktop viewport width and is immediately
- * recognizable, with surrounding provinces reduced to peripheral context. Sits
+ * The tuned reference product ZOOM for the desktop overview framing. Bumped to
+ * ~11.4 (NCR-only presentation) so Metro Manila fills MOST of the viewport;
+ * the surrounding periphery is hidden by the opaque outside-NCR mask. Sits
  * inside {@link OVERVIEW_DESKTOP_ZOOM_RANGE} and the style bounds `[9, 18]`.
  */
-export const OVERVIEW_DESKTOP_ZOOM = 11;
+export const OVERVIEW_DESKTOP_ZOOM = 11.4;
 
 /**
  * Style zoom bounds mirrored from the basemap style (`STYLE_MIN_ZOOM` /

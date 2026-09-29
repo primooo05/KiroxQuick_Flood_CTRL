@@ -20,7 +20,11 @@ export class FixtureDataSource implements DataSource {
    * validates and projects that category's items.
    */
   getLayer<TItem>(id: LayerId): DataLayer<TItem> {
-    return fixtureLayers[id] as unknown as DataLayer<TItem>;
+    const layer = fixtureLayers[id];
+    if (!layer) {
+      throw new Error(`FixtureDataSource: no fixture layer for id "${id}".`);
+    }
+    return layer as unknown as DataLayer<TItem>;
   }
 
   /**
@@ -29,7 +33,9 @@ export class FixtureDataSource implements DataSource {
    * `isDemo: true` (Req 15.2).
    */
   listLayers(): DataLayerMeta[] {
-    return ALL_LAYER_IDS.map((id) => fixtureLayers[id].meta);
+    return ALL_LAYER_IDS.map((id) => fixtureLayers[id]).flatMap((layer) =>
+      layer ? [layer.meta] : [],
+    );
   }
 }
 

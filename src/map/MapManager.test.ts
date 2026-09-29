@@ -17,12 +17,16 @@ import {
   type MinimalMap,
 } from './MapManager';
 import { NCR_CLIP_LAYER_ID, NCR_CLIP_SOURCE_ID } from './metroManilaClipMask';
+import { NCR_OUTSIDE_MASK_LAYER_ID } from './ncrOutsideMask';
 import {
   METRO_MANILA_EXTENT,
+  METRO_MANILA_MAX_BOUNDS,
+  METRO_MANILA_NEARBY_MAX_BOUNDS,
   isWithinMetroManila,
 } from './metroManilaExtent';
 import {
   BAHAROUTE_MAPBOX_STYLE_URL,
+  BAHAROUTE_STANDARD_CONFIG,
   STYLE_MAX_ZOOM,
   STYLE_MIN_ZOOM,
 } from './basemap/BahaRouteStyle';
@@ -107,10 +111,19 @@ describe('MapManager.init framing (Req 1.2, 1.3)', () => {
     expect(map.__options.container).toBe(container);
     // The Mapbox access token flows from AppConfig.tileKey (env), never hardcoded.
     expect(map.__options.accessToken).toBe(CONFIG.tileKey);
-    // No hard clip: the constructor sets center/zoom, not maxBounds.
+    // NCR-only presentation: the constructor constrains panning to the padded
+    // NCR maxBounds so users cannot roam into surrounding provinces.
     expect(
       (map.__options as unknown as { maxBounds?: unknown }).maxBounds,
-    ).toBeUndefined();
+    ).toEqual(METRO_MANILA_MAX_BOUNDS);
+    // The padded bounds must still contain the full framing extent so the edge
+    // LGUs stay inspectable (padding extends beyond every NCR edge).
+    const [[mbW, mbS], [mbE, mbN]] = METRO_MANILA_MAX_BOUNDS;
+    const [[exW, exS], [exE, exN]] = METRO_MANILA_EXTENT;
+    expect(mbW).toBeLessThan(exW);
+    expect(mbS).toBeLessThan(exS);
+    expect(mbE).toBeGreaterThan(exE);
+    expect(mbN).toBeGreaterThan(exN);
 
     mgr.destroy();
   });
@@ -398,11 +411,12 @@ function makeCameraFake(): {
   factory: (o: MapConstructorOptions) => MinimalMap;
 } {
   const { map, factory } = makeFake();
-  const cameraMap = map as CameraFakeMap;
+  const cameraMap = map as CameraFakeMap & { getBearing: ReturnType<typeof vi.fn> };
   cameraMap.flyTo = vi.fn();
   cameraMap.easeTo = vi.fn();
   cameraMap.setPitch = vi.fn();
   cameraMap.setBearing = vi.fn();
+  cameraMap.getBearing = vi.fn(() => 0);
   return { map: cameraMap, factory };
 }
 
@@ -473,6 +487,73 @@ describe('MapManager camera extensions (Req 1.2, 10.5)', () => {
     // After destroy: map is null again.
     expect(() => mgr.flyTo({})).not.toThrow();
     expect(() => mgr.frameOverview()).not.toThrow();
+  });
+});
+
+describe('MapManager rotation (360°)', () => {
+  function initRotateFake() {
+    const { map, factory } = makeCameraFake();
+    const m = map as CameraFakeMap & { getBearing: ReturnType<typeof vi.fn> };
+    const mgr = new MapManager();
+    mgr.init({
+      container: document.createElement('div'),
+      config: CONFIG,
+      mapFactory: factory,
+    });
+    return { map: m, mgr };
+  }
+
+  it('enables rotation gestures at construction', () => {
+    const { map, mgr } = initRotateFake();
+    const opts = map.__options as unknown as {
+      dragRotate?: boolean;
+      pitchWithRotate?: boolean;
+      touchZoomRotate?: boolean;
+    };
+    expect(opts.dragRotate).toBe(true);
+    expect(opts.pitchWithRotate).toBe(true);
+    expect(opts.touchZoomRotate).toBe(true);
+    mgr.destroy();
+  });
+
+  it('rotateBy eases the bearing by the delta (clockwise + counter-clockwise)', () => {
+    const { map, mgr } = initRotateFake();
+    map.getBearing.mockReturnValue(0);
+    mgr.rotateBy(45);
+    expect(map.easeTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bearing: 45 }),
+    );
+    map.getBearing.mockReturnValue(45);
+    mgr.rotateBy(-90);
+    expect(map.easeTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bearing: -45 }),
+    );
+    mgr.destroy();
+  });
+
+  it('getBearing normalizes into [0, 360)', () => {
+    const { map, mgr } = initRotateFake();
+    map.getBearing.mockReturnValue(-90);
+    expect(mgr.getBearing()).toBe(270);
+    map.getBearing.mockReturnValue(450);
+    expect(mgr.getBearing()).toBe(90);
+    mgr.destroy();
+  });
+
+  it('resetNorth eases the bearing back to 0', () => {
+    const { map, mgr } = initRotateFake();
+    mgr.resetNorth();
+    expect(map.easeTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ bearing: 0 }),
+    );
+    mgr.destroy();
+  });
+
+  it('rotation methods are safe no-ops before init', () => {
+    const mgr = new MapManager();
+    expect(() => mgr.rotateBy(45)).not.toThrow();
+    expect(() => mgr.resetNorth()).not.toThrow();
+    expect(mgr.getBearing()).toBe(0);
   });
 });
 
@@ -590,8 +671,16 @@ describe('MapManager 3D view', () => {
   it('constructs with the Standard faded/day config and 3D hidden', () => {
     const { map, mgr } = initWith3DFake();
     expect(map.__options.config).toEqual({
-      basemap: { theme: 'faded', lightPreset: 'day', show3dObjects: false },
+      basemap: { ...BAHAROUTE_STANDARD_CONFIG },
     });
+    // NCR-only: basemap settlement/POI/transit labels OFF so surrounding
+    // places never appear; road labels stay for navigation context.
+    const basemap = (map.__options.config as { basemap: Record<string, unknown> })
+      .basemap;
+    expect(basemap.showPlaceLabels).toBe(false);
+    expect(basemap.showPointOfInterestLabels).toBe(false);
+    expect(basemap.showTransitLabels).toBe(false);
+    expect(basemap.showRoadLabels).toBe(true);
     expect(mgr.is3D()).toBe(false);
     mgr.destroy();
   });
@@ -757,5 +846,79 @@ describe('MapManager drive camera + radius options', () => {
     mgr.setDriveRadius(250);
     expect(setData).toHaveBeenCalledTimes(1);
     mgr.destroy();
+  });
+});
+
+describe('MapManager.setMapContext (NCR-only ↔ nearby presentation)', () => {
+  function initContextFake() {
+    const { map, factory } = makeCameraFake();
+    const m = map as CameraFakeMap & Record<string, ReturnType<typeof vi.fn>>;
+    m.setConfigProperty = vi.fn();
+    m.addSource = vi.fn();
+    m.addLayer = vi.fn();
+    // The outside-NCR mask layer exists (so visibility toggles apply).
+    m.getLayer = vi.fn(() => ({ id: NCR_OUTSIDE_MASK_LAYER_ID }));
+    m.setLayoutProperty = vi.fn();
+    m.setMaxBounds = vi.fn();
+    const mgr = new MapManager();
+    mgr.init({
+      container: document.createElement('div'),
+      config: CONFIG,
+      mapFactory: factory,
+    });
+    return { map: m, mgr };
+  }
+
+  it('defaults to "nearby" (surrounding areas shown for orientation)', () => {
+    const { mgr } = initContextFake();
+    expect(mgr.getMapContext()).toBe('nearby');
+    mgr.destroy();
+  });
+
+  it('nearby mode restores place labels, hides the mask, and widens maxBounds', () => {
+    const { map, mgr } = initContextFake();
+    mgr.setMapContext('nearby');
+
+    expect(map.setConfigProperty).toHaveBeenCalledWith('basemap', 'showPlaceLabels', true);
+    expect(map.setConfigProperty).toHaveBeenCalledWith(
+      'basemap',
+      'showPointOfInterestLabels',
+      true,
+    );
+    expect(map.setConfigProperty).toHaveBeenCalledWith('basemap', 'showTransitLabels', true);
+    expect(map.setLayoutProperty).toHaveBeenCalledWith(
+      NCR_OUTSIDE_MASK_LAYER_ID,
+      'visibility',
+      'none',
+    );
+    expect(map.setMaxBounds).toHaveBeenLastCalledWith(METRO_MANILA_NEARBY_MAX_BOUNDS);
+    expect(mgr.getMapContext()).toBe('nearby');
+    mgr.destroy();
+  });
+
+  it('ncr-only mode hides place labels, shows the mask, and tightens maxBounds', () => {
+    const { map, mgr } = initContextFake();
+    mgr.setMapContext('nearby');
+    mgr.setMapContext('ncr-only');
+
+    expect(map.setConfigProperty).toHaveBeenLastCalledWith(
+      'basemap',
+      'showTransitLabels',
+      false,
+    );
+    expect(map.setLayoutProperty).toHaveBeenLastCalledWith(
+      NCR_OUTSIDE_MASK_LAYER_ID,
+      'visibility',
+      'visible',
+    );
+    expect(map.setMaxBounds).toHaveBeenLastCalledWith(METRO_MANILA_MAX_BOUNDS);
+    expect(mgr.getMapContext()).toBe('ncr-only');
+    mgr.destroy();
+  });
+
+  it('is a safe no-op before init', () => {
+    const mgr = new MapManager();
+    expect(() => mgr.setMapContext('nearby')).not.toThrow();
+    expect(mgr.getMapContext()).toBe('nearby');
   });
 });

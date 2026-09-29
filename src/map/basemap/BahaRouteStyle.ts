@@ -45,11 +45,29 @@ export const STANDARD_BASEMAP_IMPORT_ID = 'basemap';
 /**
  * Mapbox Standard configuration applied at construction: muted `faded` theme,
  * `day` lighting, and 3D objects hidden until the user switches to 3D.
+ *
+ * NCR-ONLY PRESENTATION: BahaRoute is scoped strictly to Metro Manila, and the
+ * Standard basemap's place labels render in a top slot ABOVE our opaque
+ * outside-NCR mask — so surrounding settlements (Antipolo City, Bacoor, Imus,
+ * San Pedro, Marilao, Bulakan, Tanay, Binangonan, …) would otherwise still
+ * float over the masked area. We therefore turn OFF the basemap's
+ * settlement/POI/transit labels via the Standard style config. BahaRoute's own
+ * dedicated 17-LGU label layer provides all Metro Manila orientation instead.
+ *
+ * We deliberately KEEP `showRoadLabels: true` so roads, road numbers, and local
+ * streets stay legible, and we do NOT touch water/coastline (those are not
+ * label categories and remain visible for orientation).
  */
 export const BAHAROUTE_STANDARD_CONFIG = {
   theme: 'faded',
   lightPreset: 'day',
   show3dObjects: false,
+  // Hide basemap settlement/POI/transit labels (they introduce non-NCR places
+  // over the mask). Keep road labels so navigation context stays.
+  showPlaceLabels: false,
+  showPointOfInterestLabels: false,
+  showTransitLabels: false,
+  showRoadLabels: true,
 } as const;
 
 /**
