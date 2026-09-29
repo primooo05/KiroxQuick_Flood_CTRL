@@ -167,7 +167,7 @@ describe('responsive framing constants (Req 1.2–1.6)', () => {
     // High fill so the NCR width dominates the desktop viewport (Req 1.2, 1.4).
     expect(OVERVIEW_DESKTOP_TARGET_FILL).toBeGreaterThan(OVERVIEW_TARGET_FILL);
     expect(OVERVIEW_DESKTOP_TARGET_FILL).toBeLessThanOrEqual(1);
-    // Product zoom range is a well-formed [min, max] nested inside [9, 18].
+    // Product zoom range is a well-formed [min, max] nested inside [9, 20].
     expect(OVERVIEW_DESKTOP_ZOOM_RANGE.min).toBeLessThan(
       OVERVIEW_DESKTOP_ZOOM_RANGE.max,
     );

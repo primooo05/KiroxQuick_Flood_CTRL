@@ -27,7 +27,7 @@
 
 /** Style-level zoom bounds for the BahaRoute basemap. */
 export const STYLE_MIN_ZOOM = 9;
-export const STYLE_MAX_ZOOM = 18;
+export const STYLE_MAX_ZOOM = 20;
 
 /**
  * The stock Mapbox style URL used for the BahaRoute basemap. A `mapbox://`

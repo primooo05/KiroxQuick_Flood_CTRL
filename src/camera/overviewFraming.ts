@@ -179,7 +179,7 @@ export const OVERVIEW_DESKTOP_ZOOM = 11;
  * and so the responsive zoom can be clamped to the SAME bounds the map enforces.
  */
 export const STYLE_MIN_ZOOM = 9;
-export const STYLE_MAX_ZOOM = 18;
+export const STYLE_MAX_ZOOM = 20;
 
 /**
  * Aspect-ratio threshold (viewport width / height) at or below which the

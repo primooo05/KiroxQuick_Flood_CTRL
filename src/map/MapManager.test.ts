@@ -10,6 +10,9 @@ import {
   MapManager,
   TILE_WATCHDOG_MS,
   VIEW_3D_PITCH,
+  DRIVE_CAMERAS,
+  DRIVE_PITCH,
+  DRIVE_ZOOM,
   type MapConstructorOptions,
   type MinimalMap,
 } from './MapManager';
@@ -643,6 +646,116 @@ describe('MapManager 3D view', () => {
     mgr.init({ container: document.createElement('div'), config: CONFIG, mapFactory: factory });
     expect(() => mgr.set3D(true)).not.toThrow();
     expect(() => map.emit('load')).not.toThrow();
+    mgr.destroy();
+  });
+});
+
+describe('MapManager drive view', () => {
+  function initDriveFake() {
+    const { map, factory } = makeCameraFake();
+    const layers = new Set<string>();
+    const sources = new Map<string, { setData: ReturnType<typeof vi.fn> }>();
+    const m = map as CameraFakeMap & Record<string, ReturnType<typeof vi.fn>>;
+    m.setConfigProperty = vi.fn();
+    m.jumpTo = vi.fn();
+    m.addSource = vi.fn((id: string) => sources.set(id, { setData: vi.fn() }));
+    m.addLayer = vi.fn((l: { id: string }) => layers.add(l.id));
+    m.getLayer = vi.fn((id: string) => (layers.has(id) ? {} : undefined));
+    m.getSource = vi.fn((id: string) => sources.get(id));
+    m.removeLayer = vi.fn((id: string) => layers.delete(id));
+    m.removeSource = vi.fn((id: string) => sources.delete(id));
+    const mgr = new MapManager();
+    mgr.init({ container: document.createElement('div'), config: CONFIG, mapFactory: factory });
+    return { m, mgr, layers, sources };
+  }
+  const route: [number, number][] = [
+    [120.99, 14.51],
+    [120.99, 14.52],
+  ];
+
+  it('enters 3D with trees off, adds route/car/radius clip, and follows the car', () => {
+    const { m, mgr, layers } = initDriveFake();
+    mgr.startDriveView(route);
+    expect(mgr.isDriving()).toBe(true);
+    expect(m.setConfigProperty).toHaveBeenCalledWith('basemap', 'show3dObjects', true);
+    expect(m.setConfigProperty).toHaveBeenCalledWith('basemap', 'show3dTrees', false);
+    expect(layers).toEqual(
+      new Set(['drive-route-line', 'drive-3d-radius-clip', 'drive-car-dot']),
+    );
+
+    mgr.updateDrive({ position: [120.99, 14.515], bearing: 0 });
+    expect(m.jumpTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({ center: [120.99, 14.515], zoom: DRIVE_ZOOM, pitch: DRIVE_PITCH }),
+    );
+    mgr.destroy();
+  });
+
+  it('moves the radius clip only after DRIVE_RADIUS_UPDATE_M', () => {
+    const { mgr, sources } = initDriveFake();
+    mgr.startDriveView(route);
+    const radius = sources.get('drive-3d-radius-mask')!;
+    mgr.updateDrive({ position: [120.99, 14.5105], bearing: 0 }); // ~55 m
+    expect(radius.setData).not.toHaveBeenCalled();
+    mgr.updateDrive({ position: [120.99, 14.5125], bearing: 0 }); // ~275 m
+    expect(radius.setData).toHaveBeenCalledTimes(1);
+    mgr.destroy();
+  });
+
+  it('endDriveView removes overlays and restores trees + 2D', () => {
+    const { m, mgr, layers, sources } = initDriveFake();
+    mgr.startDriveView(route);
+    mgr.endDriveView();
+    expect(mgr.isDriving()).toBe(false);
+    expect(mgr.is3D()).toBe(false);
+    expect(layers.size).toBe(0);
+    expect(sources.size).toBe(0);
+    expect(m.setConfigProperty).toHaveBeenCalledWith('basemap', 'show3dTrees', true);
+    expect(m.setConfigProperty).toHaveBeenLastCalledWith('basemap', 'show3dObjects', false);
+    mgr.destroy();
+  });
+
+  it('is a safe no-op on minimal fakes', () => {
+    const { factory } = makeFake();
+    const mgr = new MapManager();
+    mgr.init({ container: document.createElement('div'), config: CONFIG, mapFactory: factory });
+    expect(() => {
+      mgr.startDriveView(route);
+      mgr.updateDrive({ position: route[1], bearing: 0 });
+      mgr.endDriveView();
+    }).not.toThrow();
+    mgr.destroy();
+  });
+});
+
+describe('MapManager drive camera + radius options', () => {
+  it('uses the driver camera preset and redraws the clip when the radius changes', () => {
+    const { map, factory } = makeCameraFake();
+    const setData = vi.fn();
+    const m = map as CameraFakeMap & Record<string, unknown>;
+    m.jumpTo = vi.fn();
+    m.setConfigProperty = vi.fn();
+    m.addSource = vi.fn();
+    m.addLayer = vi.fn();
+    m.getSource = vi.fn(() => ({ setData }));
+    const mgr = new MapManager();
+    mgr.init({ container: document.createElement('div'), config: CONFIG, mapFactory: factory });
+
+    mgr.setDriveCamera('driver');
+    mgr.startDriveView([
+      [120.99, 14.51],
+      [120.99, 14.52],
+    ]);
+    mgr.updateDrive({ position: [120.99, 14.51], bearing: 0 });
+    expect(m.jumpTo).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        zoom: DRIVE_CAMERAS.driver.zoom,
+        pitch: DRIVE_CAMERAS.driver.pitch,
+      }),
+    );
+
+    setData.mockClear();
+    mgr.setDriveRadius(250);
+    expect(setData).toHaveBeenCalledTimes(1);
     mgr.destroy();
   });
 });

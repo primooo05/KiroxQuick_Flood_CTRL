@@ -32,9 +32,9 @@ describe('BahaRoute basemap style provider (Mapbox stock style)', () => {
     expect(bahaRouteStyleUrl()).not.toContain('?');
   });
 
-  it('preserves the style-level zoom bounds (9..18)', () => {
+  it('preserves the style-level zoom bounds (9..20)', () => {
     expect(STYLE_MIN_ZOOM).toBe(9);
-    expect(STYLE_MAX_ZOOM).toBe(18);
+    expect(STYLE_MAX_ZOOM).toBe(20);
     expect(STYLE_MIN_ZOOM).toBeLessThan(STYLE_MAX_ZOOM);
   });
 });

@@ -1,3 +1,4 @@
+/// <reference types="geojson" />
 // src/map/MapManager.ts
 //
 // MapManager owns the imperative Mapbox GL JS `Map` instance lifecycle behind a
@@ -34,6 +35,7 @@ import {
   NCR_CLIP_LAYER_ID,
   NCR_CLIP_SOURCE_ID,
 } from './metroManilaClipMask';
+import { distanceMeters, outsideRadiusMask } from '../simulation/routeGeometry';
 import {
   OVERVIEW_BOUNDS,
   OVERVIEW_DESKTOP_CENTER,
@@ -64,6 +66,62 @@ export const VIEW_3D_PITCH = 60;
 
 /** Duration (ms) of the 2D ↔ 3D camera tilt animation. */
 const VIEW_MODE_TRANSITION_MS = 800;
+
+// --- Drive view (demo simulation) -------------------------------------------
+/** Follow-camera zoom / pitch while driving. */
+export const DRIVE_ZOOM = 16.5;
+export const DRIVE_PITCH = 50;
+
+/**
+ * Camera presets for the drive: `follow` is the overview-ish chase camera;
+ * `driver` is a Google/Apple-style navigation camera (close, steep, with the
+ * car pushed into the lower third via top padding).
+ */
+export type DriveCameraMode = 'follow' | 'driver';
+export const DRIVE_CAMERAS: Record<
+  DriveCameraMode,
+  { zoom: number; pitch: number; topPaddingRatio: number }
+> = {
+  follow: { zoom: DRIVE_ZOOM, pitch: DRIVE_PITCH, topPaddingRatio: 0 },
+  driver: { zoom: 20, pitch: 68, topPaddingRatio: 0.45 },
+};
+
+/** Selectable 3D radius presets (meters) around the vehicle. */
+export const DRIVE_RADIUS_OPTIONS = [250, 600] as const;
+export type DriveRadius = (typeof DRIVE_RADIUS_OPTIONS)[number];
+/** Default 3D radius (follow camera). */
+export const DRIVE_3D_RADIUS_M: DriveRadius = 600;
+
+/** A point overlay drawn during the drive (e.g. a demo hazard). */
+export interface DriveMarker {
+  position: [number, number];
+  color: string;
+}
+/** Move the radius clip only after the vehicle travels this far. */
+export const DRIVE_RADIUS_UPDATE_M = 150;
+/** Per-frame bearing smoothing factor (0..1). */
+const DRIVE_BEARING_SMOOTHING = 0.15;
+/** App accent blue (matches --baharoute-focus-ring-color); not a flood color. */
+const DRIVE_COLOR = '#1a56db';
+
+const DRIVE_ROUTE_SOURCE = 'drive-route';
+const DRIVE_ROUTE_LAYER = 'drive-route-line';
+const DRIVE_CAR_SOURCE = 'drive-car';
+const DRIVE_CAR_LAYER = 'drive-car-dot';
+const DRIVE_RADIUS_SOURCE = 'drive-3d-radius-mask';
+const DRIVE_RADIUS_LAYER = 'drive-3d-radius-clip';
+const DRIVE_MARKERS_SOURCE = 'drive-markers';
+const DRIVE_MARKERS_LAYER = 'drive-markers-dot';
+
+/** One simulated vehicle update. */
+export interface DriveUpdate {
+  position: [number, number];
+  bearing: number;
+}
+
+function pointFeature(position: [number, number]): GeoJSON.Feature<GeoJSON.Point> {
+  return { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: position } };
+}
 
 /**
  * The minimal, ENGINE-AGNOSTIC subset of the map `Map` API that MapManager
@@ -105,6 +163,11 @@ export interface MinimalMap {
   addSource?(id: string, source: unknown): unknown;
   addLayer?(layer: unknown, beforeId?: string): unknown;
   getLayer?(id: string): unknown;
+  // Optional APIs for the drive simulation (camera follow + live sources).
+  jumpTo?(options: unknown): unknown;
+  getSource?(id: string): { setData?(data: unknown): unknown } | undefined;
+  removeLayer?(id: string): unknown;
+  removeSource?(id: string): unknown;
 }
 
 /**
@@ -309,6 +372,231 @@ export class MapManager {
     return this.view3D;
   }
 
+  // --- drive view (demo) ---------------------------------------------------
+
+  /** 3D mode before the drive started, restored by {@link endDriveView}. */
+  private preDrive3D: boolean | null = null;
+  private driveBearing: number | null = null;
+  private radiusCenter: [number, number] | null = null;
+  private driveCamera: DriveCameraMode = 'follow';
+  private driveRadius: DriveRadius = DRIVE_3D_RADIUS_M;
+
+  /** Switches the drive camera preset; applied on the next update. */
+  setDriveCamera(mode: DriveCameraMode): void {
+    this.driveCamera = mode;
+  }
+
+  /** Changes the 3D radius around the vehicle and redraws the clip now. */
+  setDriveRadius(radiusM: DriveRadius): void {
+    this.driveRadius = radiusM;
+    if (this.preDrive3D === null || !this.radiusCenter) return;
+    try {
+      this.map
+        ?.getSource?.(DRIVE_RADIUS_SOURCE)
+        ?.setData?.(outsideRadiusMask(this.radiusCenter, radiusM));
+    } catch {
+      // Source missing: ignore.
+    }
+  }
+
+  /**
+   * Enters the driver view: 3D on (trees off to save GPU), draws the route and
+   * vehicle, and adds a clip that keeps 3D only within
+   * {@link DRIVE_3D_RADIUS_M} of the vehicle (on top of the NCR-only clip).
+   * Best-effort and no-op on maps lacking the style APIs.
+   */
+  startDriveView(
+    route: ReadonlyArray<[number, number]>,
+    markers: ReadonlyArray<DriveMarker> = [],
+  ): void {
+    const map = this.map;
+    if (!map || this.preDrive3D !== null) return;
+    this.preDrive3D = this.view3D;
+    this.view3D = true;
+    this.driveBearing = null;
+    this.radiusCenter = route[0] ?? null;
+    try {
+      map.setConfigProperty?.(STANDARD_BASEMAP_IMPORT_ID, 'show3dObjects', true);
+      map.setConfigProperty?.(STANDARD_BASEMAP_IMPORT_ID, 'show3dTrees', false);
+    } catch {
+      // Not Standard / style not ready: the follow camera still works.
+    }
+    if (typeof map.addSource !== 'function' || typeof map.addLayer !== 'function') return;
+    try {
+      map.addSource(DRIVE_ROUTE_SOURCE, {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: route },
+        },
+      });
+      map.addLayer({
+        id: DRIVE_ROUTE_LAYER,
+        type: 'line',
+        slot: 'middle',
+        source: DRIVE_ROUTE_SOURCE,
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': DRIVE_COLOR, 'line-width': 6, 'line-opacity': 0.75 },
+      });
+      if (route[0]) {
+        map.addSource(DRIVE_RADIUS_SOURCE, {
+          type: 'geojson',
+          data: outsideRadiusMask(route[0], this.driveRadius),
+        });
+        map.addLayer({
+          id: DRIVE_RADIUS_LAYER,
+          type: 'clip',
+          source: DRIVE_RADIUS_SOURCE,
+          layout: { 'clip-layer-types': ['model'] },
+        });
+        if (markers.length > 0) {
+          map.addSource(DRIVE_MARKERS_SOURCE, {
+            type: 'geojson',
+            data: {
+              type: 'FeatureCollection',
+              features: markers.map((mk) => ({
+                ...pointFeature(mk.position),
+                properties: { color: mk.color },
+              })),
+            },
+          });
+          map.addLayer({
+            id: DRIVE_MARKERS_LAYER,
+            type: 'circle',
+            slot: 'top',
+            source: DRIVE_MARKERS_SOURCE,
+            paint: {
+              'circle-radius': 11,
+              'circle-color': ['get', 'color'],
+              'circle-opacity': 0.9,
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 2,
+              'circle-pitch-alignment': 'map',
+            },
+          });
+        }
+        map.addSource(DRIVE_CAR_SOURCE, { type: 'geojson', data: pointFeature(route[0]) });
+        map.addLayer({
+          id: DRIVE_CAR_LAYER,
+          type: 'circle',
+          slot: 'top',
+          source: DRIVE_CAR_SOURCE,
+          paint: {
+            'circle-radius': 9,
+            'circle-color': DRIVE_COLOR,
+            'circle-stroke-color': '#ffffff',
+            'circle-stroke-width': 3,
+            'circle-pitch-alignment': 'map',
+          },
+        });
+      }
+    } catch {
+      // Overlays are best-effort; the camera follow still runs.
+    }
+  }
+
+  /**
+   * Moves the vehicle and the follow camera. The radius clip is only updated
+   * every {@link DRIVE_RADIUS_UPDATE_M} meters to avoid per-frame reprocessing.
+   */
+  updateDrive({ position, bearing }: DriveUpdate): void {
+    const map = this.map;
+    if (!map || this.preDrive3D === null) return;
+
+    // Smooth heading along the shortest angular direction.
+    const prev = this.driveBearing ?? bearing;
+    const delta = ((bearing - prev + 540) % 360) - 180;
+    this.driveBearing = (prev + delta * DRIVE_BEARING_SMOOTHING + 360) % 360;
+
+    const camera = DRIVE_CAMERAS[this.driveCamera];
+    const height = this.measureViewport()?.height ?? 0;
+    map.jumpTo?.({
+      center: position,
+      zoom: camera.zoom,
+      pitch: camera.pitch,
+      bearing: this.driveBearing,
+      padding: { top: Math.round(height * camera.topPaddingRatio), bottom: 0, left: 0, right: 0 },
+    });
+    try {
+      map.getSource?.(DRIVE_CAR_SOURCE)?.setData?.(pointFeature(position));
+      if (
+        !this.radiusCenter ||
+        distanceMeters(this.radiusCenter, position) >= DRIVE_RADIUS_UPDATE_M
+      ) {
+        this.radiusCenter = position;
+        map
+          .getSource?.(DRIVE_RADIUS_SOURCE)
+          ?.setData?.(outsideRadiusMask(position, this.driveRadius));
+      }
+    } catch {
+      // Source missing: keep following with the camera only.
+    }
+  }
+
+  /** Replaces the drawn route line (e.g. after a reroute). */
+  setDriveRoute(route: ReadonlyArray<[number, number]>): void {
+    if (this.preDrive3D === null) return;
+    try {
+      this.map?.getSource?.(DRIVE_ROUTE_SOURCE)?.setData?.({
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'LineString', coordinates: route },
+      });
+    } catch {
+      // Source missing: ignore.
+    }
+  }
+
+  /** Leaves the driver view, removes its overlays, restores mode + overview. */
+  endDriveView(): void {
+    const map = this.map;
+    if (!map || this.preDrive3D === null) return;
+    const restore3D = this.preDrive3D;
+    this.preDrive3D = null;
+    this.driveBearing = null;
+    this.radiusCenter = null;
+    try {
+      for (const id of [
+        DRIVE_CAR_LAYER,
+        DRIVE_MARKERS_LAYER,
+        DRIVE_RADIUS_LAYER,
+        DRIVE_ROUTE_LAYER,
+      ]) {
+        if (map.getLayer?.(id)) map.removeLayer?.(id);
+      }
+      for (const id of [
+        DRIVE_CAR_SOURCE,
+        DRIVE_MARKERS_SOURCE,
+        DRIVE_RADIUS_SOURCE,
+        DRIVE_ROUTE_SOURCE,
+      ]) {
+        if (map.getSource?.(id)) map.removeSource?.(id);
+      }
+      map.setConfigProperty?.(STANDARD_BASEMAP_IMPORT_ID, 'show3dTrees', true);
+    } catch {
+      // Cleanup is best-effort.
+    }
+    // Restore the pre-drive mode instantly, then animate back to the overview.
+    this.view3D = restore3D;
+    try {
+      map.setConfigProperty?.(STANDARD_BASEMAP_IMPORT_ID, 'show3dObjects', restore3D);
+    } catch {
+      // Ignore: style not Standard / not ready.
+    }
+    map.jumpTo?.({
+      bearing: 0,
+      pitch: restore3D ? VIEW_3D_PITCH : 0,
+      padding: { top: 0, bottom: 0, left: 0, right: 0 },
+    });
+    this.frameOverview();
+  }
+
+  /** True while the driver view is active. */
+  isDriving(): boolean {
+    return this.preDrive3D !== null;
+  }
+
   // --- camera pass-throughs (Milestone A, Req 1.2, 10.5) -------------------
   //
   // Additive, no-op-safe delegates so a future CameraController (Milestone D)
@@ -447,6 +735,7 @@ export class MapManager {
    */
   destroy(): void {
     this.clearWatchdog();
+    this.preDrive3D = null;
 
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();

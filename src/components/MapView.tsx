@@ -42,6 +42,43 @@ import { FloodPopup, type FloodPopupProps } from './overlays/FloodPopup';
 import { ZoomControls } from './controls/ZoomControls';
 import { RecenterControl } from './controls/RecenterControl';
 import { ViewModeControl } from './controls/ViewModeControl';
+import { DriveSimulationControl } from './controls/DriveSimulationControl';
+import { DriveSimulator } from '../simulation/DriveSimulator';
+import { SIM_SPEED_MPS } from '../simulation/DriveSimulator';
+import { PITX_TO_MOA_MANEUVERS, PITX_TO_MOA_ROUTE } from '../data/fixtures/pitxToMoaRoute';
+import { PITX_TO_MOA_HAZARDS, type DriveHazard } from '../data/fixtures/driveHazards';
+import { PITX_TO_MOA_REROUTES, type FloodReroute } from '../data/fixtures/floodReroutes';
+import type { RouteManeuver } from '../data/fixtures/pitxToMoaRoute';
+import {
+  findRerouteOffer,
+  formatRerouteDelta,
+  stitchReroute,
+  type RerouteOffer,
+} from '../simulation/reroute';
+import type { DriveFrame } from '../simulation/DriveSimulator';
+import { RerouteOffer as RerouteOfferCard } from './driving/RerouteOffer';
+import {
+  computeNavState,
+  formatDistance,
+  formatDuration,
+  type NavState,
+} from '../simulation/navigation';
+import { measureRoute, pointAlong } from '../simulation/routeGeometry';
+import { FLOOD_STATE_COLORS } from '../map/basemap/colorTokens';
+import { DrivingHud } from './driving/DrivingHud';
+import type { DriveCameraMode, DriveMarker, DriveRadius, DriveUpdate } from '../map/MapManager';
+
+/** The original PITX → MOA route, measured once (reroutes branch off it). */
+const BASE_ROUTE = measureRoute(PITX_TO_MOA_ROUTE);
+
+/** Demo hazard dots placed on the route (report colors, labeled in the HUD). */
+const DRIVE_HAZARD_MARKERS: ReadonlyArray<DriveMarker> = (() => {
+  const route = measureRoute(PITX_TO_MOA_ROUTE);
+  return PITX_TO_MOA_HAZARDS.map((h) => ({
+    position: pointAlong(route, h.atM),
+    color: FLOOD_STATE_COLORS[h.state].hex,
+  }));
+})();
 import { LocationControl } from './controls/LocationControl';
 import { LayerControl } from './controls/LayerControl';
 import { LayersButton } from './controls/LayersButton';
@@ -91,6 +128,16 @@ export interface MapManagerLike {
   recenter?: (durationMs?: number) => void;
   /** Switches the 2D/3D view (tilt + Standard 3D buildings). */
   set3D?: (on: boolean) => void;
+  /** Demo driver view (follow camera + 3D radius). */
+  startDriveView?: (
+    route: ReadonlyArray<[number, number]>,
+    markers?: ReadonlyArray<DriveMarker>,
+  ) => void;
+  updateDrive?: (update: DriveUpdate) => void;
+  setDriveCamera?: (mode: DriveCameraMode) => void;
+  setDriveRoute?: (route: ReadonlyArray<[number, number]>) => void;
+  setDriveRadius?: (radius: DriveRadius) => void;
+  endDriveView?: () => void;
   /**
    * Frames the tuned NCR overview (Req 1.2). Called on ready so startup shows
    * Metro Manila centered and dominant. Optional so minimal fakes stay valid.
@@ -197,24 +244,14 @@ export function MapView({
   const uninstallCityPopupRef = useRef<(() => void) | null>(null);
 
   const [phase, setPhase] = useState<MapPhase>('loading');
-  const [failureReason, setFailureReason] = useState<'timeout' | 'error' | null>(
-    null,
-  );
+  const [failureReason, setFailureReason] = useState<'timeout' | 'error' | null>(null);
   /** Popup props + position for the currently selected susceptibility area. */
-  const [popup, setPopup] = useState<
-    { props: FloodPopupProps; lngLat: LngLatLike } | null
-  >(null);
+  const [popup, setPopup] = useState<{ props: FloodPopupProps; lngLat: LngLatLike } | null>(null);
 
   // The DataSource is stable for the component lifetime; default to fixtures.
-  const source = useMemo<DataSource>(
-    () => dataSource ?? new FixtureDataSource(),
-    [dataSource],
-  );
+  const source = useMemo<DataSource>(() => dataSource ?? new FixtureDataSource(), [dataSource]);
   const layers = useMemo<DataLayerMeta[]>(() => source.listLayers(), [source]);
-  const hasDemoLayers = useMemo(
-    () => layers.some((layer) => layer.isDemo),
-    [layers],
-  );
+  const hasDemoLayers = useMemo(() => layers.some((layer) => layer.isDemo), [layers]);
 
   // Registry over the real map, created on ready so LayerControl toggles hit it.
   const registryRef = useRef<LayerRegistry | null>(null);
@@ -336,8 +373,7 @@ export function MapView({
     const map = managerRef.current?.getMap?.() ?? null;
     if (!map) return null;
     const factory =
-      createMarkerManager ??
-      ((options: MarkerManagerOptions) => new MarkerManager(options));
+      createMarkerManager ?? ((options: MarkerManagerOptions) => new MarkerManager(options));
     try {
       const manager = factory({ map, markerFactory: mapboxMarkerFactory });
       markerManagerRef.current = manager;
@@ -399,9 +435,168 @@ export function MapView({
   // 2D/3D view. Starts in 2D (the existing overview); 3D keeps center/zoom.
   const [is3D, setIs3D] = useState(false);
   const handleViewModeToggle = (next: boolean): void => {
+    // The driver view owns the camera while a drive is running.
+    if (simulatorRef.current) return;
     setIs3D(next);
     managerRef.current?.set3D?.(next);
   };
+
+  // Demo: simulated PITX → MOA drive. While it runs, the normal controls are
+  // replaced by the driving HUD (next turn, hazard ahead, trip progress).
+  const [driving, setDriving] = useState(false);
+  const [nav, setNav] = useState<NavState | null>(null);
+  const [driveCamera, setDriveCameraState] = useState<DriveCameraMode>('driver');
+  const [driveRadius, setDriveRadiusState] = useState<DriveRadius>(250);
+  const simulatorRef = useRef<DriveSimulator | null>(null);
+  /** Last rendered HUD key: only re-render React when displayed text changes. */
+  const navKeyRef = useRef('');
+
+  // Reroute: offered while driving (the car never stops) when a demo flood
+  // report is within 1 km. If the driver passes the branch point of an offered
+  // reroute without choosing, it is missed and the next reroute is offered.
+  const [offer, setOffer] = useState<RerouteOffer | null>(null);
+  /** Hazards the driver chose to keep driving through: stop offering. */
+  const dismissedRef = useRef<Set<string>>(new Set());
+  /** Hazards still ahead on the ACTIVE route (empty after a reroute). */
+  const activeHazardsRef = useRef<ReadonlyArray<DriveHazard>>(PITX_TO_MOA_HAZARDS);
+  /** Reroutes available on the ACTIVE route (empty after a reroute). */
+  const activeReroutesRef = useRef<ReadonlyArray<FloodReroute>>(PITX_TO_MOA_REROUTES);
+  /** Latest frame, so a tap uses the vehicle's current position. */
+  const lastFrameRef = useRef<DriveFrame | null>(null);
+  /** Identity of the rendered offer, to avoid per-frame React updates. */
+  const offerKeyRef = useRef('');
+
+  const stopDrive = (): void => {
+    simulatorRef.current?.stop();
+    simulatorRef.current = null;
+    managerRef.current?.endDriveView?.();
+    navKeyRef.current = '';
+    offerKeyRef.current = '';
+    dismissedRef.current = new Set();
+    activeHazardsRef.current = PITX_TO_MOA_HAZARDS;
+    activeReroutesRef.current = PITX_TO_MOA_REROUTES;
+    lastFrameRef.current = null;
+    setOffer(null);
+    setNav(null);
+    setDriving(false);
+  };
+
+  /** Current reroute offer for a frame on the active (original) route. */
+  const offerFor = (frame: DriveFrame, hazardId: string | null): RerouteOffer | null =>
+    findRerouteOffer(
+      BASE_ROUTE,
+      frame.traveledM,
+      hazardId,
+      activeReroutesRef.current,
+      dismissedRef.current,
+      SIM_SPEED_MPS,
+    );
+
+  /** Plays `route` (optionally from `fromM`), driving the camera + HUD. */
+  const runSimulator = (
+    manager: MapManagerLike,
+    route: ReadonlyArray<[number, number]>,
+    maneuvers: ReadonlyArray<RouteManeuver>,
+    fromM = 0,
+  ): void => {
+    simulatorRef.current?.stop();
+    const simulator: DriveSimulator = new DriveSimulator({
+      route,
+      onFrame: (frame) => {
+        lastFrameRef.current = frame;
+        manager.updateDrive?.(frame);
+        const state = computeNavState(
+          frame.traveledM,
+          frame.lengthM,
+          maneuvers,
+          activeHazardsRef.current,
+          SIM_SPEED_MPS,
+        );
+        const pending = offerFor(frame, state.hazard?.id ?? null);
+        const offerKey = pending
+          ? `${pending.reroute.hazardId}@${pending.reroute.fromM}|${formatRerouteDelta(pending)}|${formatDistance(pending.toBranchM)}|${pending.isRetry}`
+          : '';
+        if (offerKey !== offerKeyRef.current) {
+          offerKeyRef.current = offerKey;
+          setOffer(pending);
+        }
+        const key = [
+          state.next?.atM,
+          formatDistance(state.toNextM),
+          state.hazard?.id,
+          state.hazard ? formatDistance(state.toHazardM) : '',
+          formatDistance(state.remainingM),
+          formatDuration(state.remainingS),
+        ].join('|');
+        if (key !== navKeyRef.current) {
+          navKeyRef.current = key;
+          setNav(state);
+        }
+      },
+      onFinish: stopDrive,
+    });
+    simulatorRef.current = simulator;
+    simulator.start(fromM);
+  };
+
+  const handleDriveToggle = (next: boolean): void => {
+    const manager = managerRef.current;
+    if (!next || !manager?.startDriveView || !manager.updateDrive) {
+      stopDrive();
+      return;
+    }
+    // Drive starts in the Driver camera with the tight 250 m 3D radius.
+    setDriveCameraState('driver');
+    setDriveRadiusState(250);
+    manager.setDriveCamera?.('driver');
+    manager.setDriveRadius?.(250);
+    manager.startDriveView(PITX_TO_MOA_ROUTE, DRIVE_HAZARD_MARKERS);
+    setDriving(true);
+    runSimulator(manager, PITX_TO_MOA_ROUTE, PITX_TO_MOA_MANEUVERS);
+  };
+
+  /**
+   * Accepts the reroute FROM WHERE THE DRIVER IS: the vehicle is not moved.
+   * The new route continues on the current road to the turn-off, then onto
+   * the flood-avoiding road; directions and ETA update to it.
+   */
+  const handleReroute = (): void => {
+    const manager = managerRef.current;
+    const frame = lastFrameRef.current;
+    if (!offer || !manager || !frame) return;
+    // Re-evaluate at tap time: the car kept moving since the card rendered.
+    const fresh = offerFor(frame, offer.reroute.hazardId);
+    if (!fresh) return; // Too late for any turn-off; nothing to switch to.
+    const next = stitchReroute(BASE_ROUTE, PITX_TO_MOA_MANEUVERS, fresh.reroute, frame.traveledM);
+    if (!next) return; // Not joinable on real roads (never offered in practice).
+    // The reroute excludes every demo hazard, so none remain ahead on it.
+    activeHazardsRef.current = [];
+    activeReroutesRef.current = [];
+    offerKeyRef.current = '';
+    navKeyRef.current = '';
+    setOffer(null);
+    manager.setDriveRoute?.(next.route);
+    runSimulator(manager, next.route, next.maneuvers);
+  };
+
+  /** Keeps the current route; no more reroutes for this hazard. */
+  const handleKeepRoute = (): void => {
+    if (!offer) return;
+    dismissedRef.current.add(offer.reroute.hazardId);
+    offerKeyRef.current = '';
+    setOffer(null);
+  };
+
+  const handleDriveCamera = (mode: DriveCameraMode): void => {
+    setDriveCameraState(mode);
+    managerRef.current?.setDriveCamera?.(mode);
+  };
+  const handleDriveRadius = (radius: DriveRadius): void => {
+    setDriveRadiusState(radius);
+    managerRef.current?.setDriveRadius?.(radius);
+  };
+  // Stop the animation loop if the map unmounts mid-drive.
+  useEffect(() => () => simulatorRef.current?.stop(), []);
 
   /**
    * On a granted location, drop/move the current-location (origin) marker and
@@ -441,9 +636,7 @@ export function MapView({
       {phase === 'loading' && <LoadingIndicator />}
 
       {/* Error overlay: shown on tile failure/timeout; app stays interactive. */}
-      {phase === 'error' && (
-        <ErrorMessage reason={failureReason ?? undefined} />
-      )}
+      {phase === 'error' && <ErrorMessage reason={failureReason ?? undefined} />}
 
       {/* Demo-data badge: visible whenever demo/fixture layers are present. */}
       {hasDemoLayers && <DemoDataBadge />}
@@ -456,13 +649,43 @@ export function MapView({
         flips it to a spaced top-right column. The hardcoded inline
         right/top positioning was removed in favor of that class.
       */}
-      <div className="baharoute-controls" data-testid="map-controls">
+      {/* Driving mode replaces the normal controls + legend while a drive runs. */}
+      {driving && nav && (
+        <DrivingHud
+          nav={nav}
+          camera={driveCamera}
+          radius={driveRadius}
+          onCameraChange={handleDriveCamera}
+          onRadiusChange={handleDriveRadius}
+          onStop={stopDrive}
+        >
+          {offer && nav.hazard && (
+            <RerouteOfferCard
+              offer={offer}
+              hazard={nav.hazard}
+              toHazardM={nav.toHazardM}
+              onReroute={handleReroute}
+              onKeep={handleKeepRoute}
+            />
+          )}
+        </DrivingHud>
+      )}
+
+      <div
+        className="baharoute-controls"
+        data-testid="map-controls"
+        hidden={driving}
+        style={driving ? { display: 'none' } : undefined}
+      >
         <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />
         <div className="baharoute-control-card baharoute-control-card--single">
           <RecenterControl onRecenter={handleRecenter} />
         </div>
         <div className="baharoute-control-card baharoute-control-card--single">
-          <ViewModeControl is3D={is3D} onToggle={handleViewModeToggle} />
+          <ViewModeControl is3D={is3D || driving} onToggle={handleViewModeToggle} />
+        </div>
+        <div className="baharoute-control-card baharoute-control-card--single">
+          <DriveSimulationControl running={driving} onToggle={handleDriveToggle} />
         </div>
         <div className="baharoute-control-card baharoute-control-card--single">
           <LocationControl onLocated={handleLocated} />
@@ -474,16 +697,13 @@ export function MapView({
       </div>
 
       {/* Enhancement: collapsible legend explaining the flood colors. */}
-      {phase !== 'error' && <MapLegend />}
+      {phase !== 'error' && !driving && <MapLegend />}
 
       {/* Susceptibility popup, rendered as React state driven by map clicks. */}
       {popup && (
         // Enhancement: floating card (desktop) / bottom sheet (mobile) with an
         // icon close button; Escape also closes it. Placement lives in layout.css.
-        <div
-          className="baharoute-popup-host"
-          data-testid="map-popup-host"
-        >
+        <div className="baharoute-popup-host" data-testid="map-popup-host">
           <button
             type="button"
             className="baharoute-popup-close baharoute-icon-button baharoute-focus-ring"

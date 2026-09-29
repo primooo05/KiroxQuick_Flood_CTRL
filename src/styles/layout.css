@@ -72,6 +72,9 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* Full-screen map app: never scroll the page in either direction. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .baharoute-app {
@@ -80,6 +83,10 @@ body,
   flex-direction: column;
   height: 100vh;
   min-height: 100vh;
+  /* Mobile: 100vh overshoots the visible area behind browser bars. */
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
 }
 
 /* The map area is dominant: it fills the remaining space and the controls are
@@ -599,5 +606,265 @@ body,
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
     z-index: 5;
+  }
+}
+
+/* --- Driving mode HUD (simulated drive) ----------------------------------- */
+.baharoute-drive-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: calc(12px + env(safe-area-inset-top, 0px)) 12px
+    calc(12px + env(safe-area-inset-bottom, 0px));
+  gap: 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.baharoute-drive-hud > * {
+  pointer-events: auto;
+  width: 100%;
+  max-width: 520px;
+  min-width: 0;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.baharoute-drive-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: var(--baharoute-radius);
+  background: #1f3b2d;
+  color: #ffffff;
+  box-shadow: var(--baharoute-shadow);
+}
+.baharoute-drive-banner__icon {
+  flex: none;
+  width: 48px;
+  font-size: 40px;
+  line-height: 1;
+  font-weight: 700;
+  text-align: center;
+}
+.baharoute-drive-banner__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.baharoute-drive-banner__distance {
+  font-size: 26px;
+  line-height: 1.1;
+}
+.baharoute-drive-banner__instruction {
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.baharoute-drive-hazard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--baharoute-radius);
+  border-left: 6px solid;
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  box-shadow: var(--baharoute-shadow);
+  font-size: 14px;
+}
+.baharoute-drive-hazard__dot {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+}
+.baharoute-drive-hazard__source {
+  display: block;
+  color: var(--baharoute-text-muted);
+  font-size: 12px;
+}
+.baharoute-drive-bar {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--baharoute-radius);
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  box-shadow: var(--baharoute-shadow);
+}
+.baharoute-drive-bar__trip {
+  display: flex;
+  flex-direction: column;
+}
+.baharoute-drive-bar__trip strong {
+  font-size: 20px;
+}
+.baharoute-drive-bar__trip span {
+  color: var(--baharoute-text-muted);
+  font-size: 14px;
+}
+.baharoute-drive-bar__options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.baharoute-segmented {
+  display: inline-flex;
+  border: 1px solid var(--baharoute-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.baharoute-segmented__option {
+  min-height: var(--baharoute-touch-target);
+  padding: 0 12px;
+  border: 0;
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  font-size: 14px;
+  cursor: pointer;
+}
+.baharoute-segmented__option[aria-pressed='true'] {
+  background: var(--baharoute-focus-ring-color);
+  color: #ffffff;
+  font-weight: 700;
+}
+.baharoute-drive-bar__stop {
+  min-height: var(--baharoute-touch-target);
+  padding: 0 18px;
+  border: 0;
+  border-radius: 999px;
+  /* Neutral dark: red is reserved for flood states. */
+  background: var(--baharoute-text);
+  color: #ffffff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Reroute choice (driving mode). */
+.baharoute-reroute {
+  padding: 14px 16px;
+  border-radius: var(--baharoute-radius);
+  border-top: 6px solid;
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  box-shadow: var(--baharoute-shadow);
+}
+.baharoute-reroute__title {
+  margin: 0;
+  font-size: 18px;
+}
+.baharoute-reroute__desc {
+  margin: 4px 0 10px;
+  color: var(--baharoute-text-muted);
+  font-size: 14px;
+}
+.baharoute-reroute__options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.baharoute-reroute__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: var(--baharoute-touch-target);
+  padding: 10px 14px;
+  border: 1px solid var(--baharoute-border);
+  border-radius: var(--baharoute-radius);
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.baharoute-reroute__option--primary {
+  border-color: var(--baharoute-focus-ring-color);
+  background: var(--baharoute-focus-ring-color);
+  color: #ffffff;
+}
+
+/* Driver POV on phones: compact HUD so it fits the viewport with no scroll,
+ * leaving the road visible between the banner and the bottom bar. */
+@media (max-width: 767px) {
+  .baharoute-drive-hud {
+    padding: calc(8px + env(safe-area-inset-top, 0px))
+      calc(8px + env(safe-area-inset-right, 0px))
+      calc(8px + env(safe-area-inset-bottom, 0px))
+      calc(8px + env(safe-area-inset-left, 0px));
+    gap: 6px;
+  }
+  .baharoute-drive-banner {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .baharoute-drive-banner__icon {
+    width: 36px;
+    font-size: 30px;
+  }
+  .baharoute-drive-banner__distance {
+    font-size: 22px;
+  }
+  .baharoute-drive-banner__instruction {
+    font-size: 14px;
+    white-space: nowrap;
+  }
+  .baharoute-drive-hazard {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .baharoute-drive-bar {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .baharoute-drive-bar__trip strong {
+    font-size: 18px;
+  }
+  .baharoute-drive-bar__trip span {
+    font-size: 13px;
+  }
+  .baharoute-drive-bar__options {
+    width: 100%;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .baharoute-segmented {
+    min-width: 0;
+  }
+  .baharoute-segmented__option {
+    padding: 0 10px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .baharoute-drive-bar__stop {
+    flex: none;
+    padding: 0 14px;
+  }
+  /* Reroute card: cap height; the card itself never scrolls the page. */
+  .baharoute-reroute {
+    padding: 10px 12px;
+    max-height: 40dvh;
+    overflow: hidden;
+  }
+  .baharoute-reroute__title {
+    font-size: 16px;
+  }
+  .baharoute-reroute__desc {
+    margin: 2px 0 8px;
+    font-size: 13px;
+  }
+  .baharoute-reroute__option {
+    padding: 8px 12px;
+    font-size: 13px;
   }
 }
