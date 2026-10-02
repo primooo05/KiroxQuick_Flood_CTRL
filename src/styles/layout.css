@@ -40,6 +40,13 @@
   --baharoute-control-gap: 12px;
   --baharoute-control-inset: 12px;
 
+  /* Desktop left-panel offsets (single source of truth so every left panel
+   * shares one viewport-aware height and clears the brand + coverage chrome). */
+  --baharoute-panel-top: calc(
+    var(--baharoute-control-inset) + var(--baharoute-safe-top) + 80px
+  );
+  --baharoute-panel-bottom-gap: calc(var(--baharoute-safe-bottom) + 40px);
+
   /*
    * Control placement tokens — MOBILE defaults.
    * Anchor the control cluster to the bottom so it sits within the lower
@@ -352,6 +359,17 @@ body,
   box-shadow: inset 0 0 0 2px currentColor;
 }
 
+/* Report-flooding control: inherits the shared control-card button sizing;
+ * shows an amber accent and a pressed state while report-pick mode is active. */
+.baharoute-report-flood {
+  font-size: 18px;
+  color: #b45309;
+}
+.baharoute-report-flood[aria-pressed='true'] {
+  color: #b45309;
+  box-shadow: inset 0 0 0 2px currentColor;
+}
+
 /* Location status message as a small toast next to the button. */
 .baharoute-location-control {
   position: relative;
@@ -596,7 +614,11 @@ body,
 }
 
 @media (max-width: 767px) {
-  /* Layers panel becomes a bottom sheet on small screens. */
+  /* Layers panel becomes a bottom sheet on small screens. It sits ABOVE any
+   * open left-panel sheet (explore/insights z6/z7) so opening Layers fully
+   * REPLACES the visible sheet rather than stacking a second one beneath it;
+   * closing Layers reveals the previous sheet again (one visible sheet at a
+   * time). Height is map-first so the map stays visible behind it. */
   .baharoute-layers__panel {
     position: fixed;
     left: 0;
@@ -606,7 +628,18 @@ body,
     padding-bottom: calc(12px + var(--baharoute-safe-bottom));
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
-    z-index: 5;
+    z-index: 9;
+  }
+
+  /* Keep the map controls reachable above any open bottom sheet: raise them
+   * over the sheet (z10) and lift the cluster above a half-height sheet while
+   * one is open, so zoom / recenter / 3D / location / report / layers never
+   * get covered. When no sheet is open they return to the bottom inset. */
+  .baharoute-controls {
+    z-index: 10;
+  }
+  .baharoute-controls[data-sheet-open='true'] {
+    --baharoute-controls-bottom: calc(42dvh + var(--baharoute-control-inset));
   }
 }
 
@@ -1118,7 +1151,10 @@ body,
 /* --- Mobile: bottom-sheet panel, thumb-friendly, no overlaps ------------- */
 @media (max-width: 767px) {
   .baharoute-status-pill {
-    top: calc(var(--baharoute-safe-top) + 8px);
+    /* Sit BELOW the brand pill row on narrow screens so the two never overlap
+     * (the brand pill occupies the top-left line). Stays horizontally centered
+     * but on its own row. */
+    top: calc(var(--baharoute-safe-top) + 52px);
     font-size: 11px;
     max-width: 88vw;
   }
@@ -1296,6 +1332,41 @@ body,
  * Mobile-first (bottom sheet); desktop (>=768px) becomes a floating left card,
  * mirroring the popup-host pattern so both never overlap the control cluster.
  * ========================================================================== */
+
+/* Recoverable "Route ready" chip (shown when a route exists but another panel
+ * is the primary left panel). Compact, bottom-left, above the coverage badge. */
+.baharoute-route-chip {
+  position: absolute;
+  left: calc(var(--baharoute-control-inset) + var(--baharoute-safe-left));
+  bottom: calc(var(--baharoute-safe-bottom) + 40px);
+  z-index: 6;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-height: var(--baharoute-touch-target);
+  padding: 8px 14px;
+  border: 1px solid var(--baharoute-border, #cbd2d9);
+  border-radius: 12px;
+  background: var(--baharoute-surface, #fff);
+  box-shadow: var(--baharoute-shadow);
+  cursor: pointer;
+  text-align: left;
+}
+.baharoute-route-chip__title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--baharoute-text);
+}
+.baharoute-route-chip__meta {
+  font-size: 12px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-route-chip__cta {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--baharoute-focus-ring-color);
+}
 
 .baharoute-trip-host {
   position: absolute;
@@ -1633,10 +1704,13 @@ body,
   .baharoute-trip-host {
     left: calc(var(--baharoute-control-inset) + var(--baharoute-safe-left));
     right: auto;
-    top: calc(var(--baharoute-control-inset) + var(--baharoute-safe-top) + 80px);
+    top: var(--baharoute-panel-top);
     bottom: auto;
     width: 340px;
-    max-height: calc(100vh - 120px);
+    /* Viewport-aware: never extend past the bottom; keep brand + coverage
+     * visible. Falls back to vh on engines without dvh. */
+    max-height: calc(100vh - var(--baharoute-panel-top) - var(--baharoute-panel-bottom-gap));
+    max-height: calc(100dvh - var(--baharoute-panel-top) - var(--baharoute-panel-bottom-gap));
     border-radius: var(--baharoute-radius);
     box-shadow: var(--baharoute-shadow);
   }
@@ -1760,4 +1834,709 @@ body,
   font-size: 13px;
   color: var(--baharoute-text-muted);
   text-align: center;
+}
+
+/* ==========================================================================
+ * Flood Insights (unified Current / Historical panel) + Historical Explore
+ * Mobile: bottom sheet (collapsed / half / full). Desktop: left-side card.
+ * The map stays the dominant visual element.
+ * ========================================================================== */
+.baharoute-insights-host {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 7;
+  box-sizing: border-box;
+}
+
+.baharoute-insights {
+  display: flex;
+  flex-direction: column;
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
+  box-sizing: border-box;
+  overflow: hidden;
+  max-height: 88vh;
+}
+/* Mobile sheet heights driven by data-sheet. MAP-FIRST: the half state keeps
+ * ~58% of the viewport as map; full is reached only by explicit expansion. */
+.baharoute-insights[data-sheet='collapsed'] {
+  max-height: 96px;
+}
+.baharoute-insights[data-sheet='half'] {
+  max-height: 42dvh;
+}
+.baharoute-insights[data-sheet='full'] {
+  max-height: 88dvh;
+}
+.baharoute-insights__handle {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 8px 12px 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.baharoute-insights__grip {
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: #cbd2d9;
+}
+.baharoute-insights__collapsed-summary {
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__head {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 16px 8px;
+}
+.baharoute-insights__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+.baharoute-insights__city {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__close {
+  flex: none;
+}
+.baharoute-insights__tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--baharoute-border, #e2e2e2);
+}
+.baharoute-insights__tab {
+  flex: 1;
+  min-height: var(--baharoute-touch-target);
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--baharoute-text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.baharoute-insights__tab--active {
+  color: var(--baharoute-text);
+  border-bottom-color: #1a56db;
+}
+.baharoute-insights__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 16px calc(16px + var(--baharoute-safe-bottom));
+}
+/* The tab panel is the SINGLE scroll region; header + tabs stay pinned. */
+.baharoute-insights [role='tabpanel'] {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.baharoute-insights__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__status-card {
+  border: 1px solid var(--baharoute-border, #e2e2e2);
+  border-left-width: 4px;
+  border-radius: 12px;
+  padding: 12px;
+}
+.baharoute-insights__risk {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+}
+.baharoute-insights__mark {
+  font-size: 18px;
+  line-height: 1;
+}
+.baharoute-insights__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.baharoute-insights__status--live {
+  color: #1e7f4f;
+}
+.baharoute-insights__status--warn {
+  color: #a15c00;
+}
+.baharoute-insights__closure {
+  border: 1px solid #7a0016;
+  background: #fbeaec;
+  border-radius: 12px;
+  padding: 12px;
+}
+.baharoute-insights__closure-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-weight: 700;
+  color: #7a0016;
+}
+.baharoute-insights__closure-src {
+  margin: 0;
+  font-size: 13px;
+}
+.baharoute-insights__metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+  margin: 0;
+}
+.baharoute-insights__metrics > div {
+  display: flex;
+  flex-direction: column;
+}
+.baharoute-insights__metrics dt {
+  font-size: 12px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__metrics dd {
+  margin: 2px 0 0;
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.baharoute-insights__section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.baharoute-insights__why ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.baharoute-insights__reports-count {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.baharoute-insights__reports-tag {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__crossref {
+  border: 1px dashed var(--baharoute-border, #cbd2d9);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.baharoute-insights__crossref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 2px 0;
+}
+.baharoute-insights__crossref-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+.baharoute-insights__fields dt {
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__fields dd {
+  margin: 0;
+  /* Long source strings must wrap, not push the panel wider (mobile). */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.baharoute-insights__more {
+  align-self: flex-start;
+  min-height: var(--baharoute-touch-target);
+  padding: 4px 10px;
+  border: 1px solid var(--baharoute-border, #cbd2d9);
+  border-radius: 8px;
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.baharoute-insights__scenario {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.baharoute-insights__scenario-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__segmented {
+  display: inline-flex;
+  gap: 4px;
+}
+.baharoute-insights__segmented button {
+  min-height: 32px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--baharoute-border, #cbd2d9);
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.baharoute-insights__segmented button[aria-pressed='true'] {
+  background: #3f2b96;
+  border-color: #3f2b96;
+  color: #fff;
+}
+.baharoute-insights__segmented button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.baharoute-insights__about {
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-insights__about p {
+  margin: 2px 0 0;
+}
+.baharoute-insights__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+
+/* Info tooltip */
+.baharoute-info {
+  position: relative;
+  display: inline-flex;
+}
+.baharoute-info__trigger {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--baharoute-border, #cbd2d9);
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text-muted);
+  font-size: 10px;
+  font-style: italic;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.baharoute-info__bubble {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  z-index: 20;
+  width: 220px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--baharoute-text);
+  background: var(--baharoute-surface);
+  border: 1px solid var(--baharoute-border, #cbd2d9);
+  border-radius: 8px;
+  box-shadow: var(--baharoute-shadow, 0 4px 16px rgba(0, 0, 0, 0.18));
+}
+
+/* Distribution bar */
+.baharoute-distbar {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #eef0f2;
+}
+.baharoute-distbar__seg {
+  height: 100%;
+}
+
+/* Historical explore panel */
+.baharoute-explore-host {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  /* MAP-FIRST mobile sheet: keep ~58% of the viewport as map by default. The
+   * desktop override below replaces this with a top-left rail height. */
+  max-height: 42dvh;
+  overflow: auto;
+  padding: 16px 16px calc(16px + var(--baharoute-safe-bottom));
+  background: var(--baharoute-surface);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
+  box-sizing: border-box;
+}
+.baharoute-explore {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--baharoute-text);
+}
+.baharoute-explore__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+.baharoute-explore__controls {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 8px 10px;
+}
+.baharoute-explore__controls label {
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-explore__controls select {
+  min-height: var(--baharoute-touch-target);
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--baharoute-border, #cbd2d9);
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  font-size: 14px;
+}
+.baharoute-explore__count {
+  margin: 0;
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-explore__summary {
+  border-top: 1px solid var(--baharoute-border, #e2e2e2);
+  padding-top: 8px;
+}
+.baharoute-explore__summary-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.baharoute-explore__summary-sub {
+  margin: 2px 0 8px;
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-explore__counts {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin: 8px 0 0;
+}
+.baharoute-explore__counts > div {
+  display: flex;
+  flex-direction: column;
+}
+.baharoute-explore__counts dt {
+  font-size: 11px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-explore__counts dd {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+.baharoute-explore__viewbrgy {
+  align-self: flex-start;
+  margin-top: 8px;
+  min-height: var(--baharoute-touch-target);
+  padding: 6px 12px;
+  border: 1px solid #3f2b96;
+  border-radius: 8px;
+  background: var(--baharoute-surface);
+  color: #3f2b96;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.baharoute-explore__provenance {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--baharoute-text-muted);
+}
+
+/* Desktop: Flood Insights + Explore become left-side cards (not full-width
+   sheets), keeping the map dominant and the right-side layers panel clear. */
+@media (min-width: 768px) {
+  .baharoute-insights-host {
+    left: calc(var(--baharoute-control-inset) + var(--baharoute-safe-left));
+    right: auto;
+    bottom: auto;
+    /* Clear the brand chip + coverage badge at the top-left (like trip-host). */
+    top: var(--baharoute-panel-top);
+    width: 360px;
+  }
+  .baharoute-insights {
+    border-radius: 14px;
+    box-shadow: var(--baharoute-shadow, 0 4px 16px rgba(0, 0, 0, 0.18));
+    max-height: calc(100vh - var(--baharoute-panel-top) - var(--baharoute-panel-bottom-gap));
+    max-height: calc(100dvh - var(--baharoute-panel-top) - var(--baharoute-panel-bottom-gap));
+  }
+  /* The drag handle is a mobile affordance; hide the grip on desktop. */
+  .baharoute-insights__grip {
+    display: none;
+  }
+  /* Desktop ignores the mobile sheet heights — all collapse to the shared
+   * viewport-aware max-height so the panel never runs off-screen. */
+  .baharoute-insights[data-sheet='collapsed'],
+  .baharoute-insights[data-sheet='half'],
+  .baharoute-insights[data-sheet='full'] {
+    max-height: calc(100vh - var(--baharoute-panel-top) - var(--baharoute-panel-bottom-gap));
+    max-height: calc(100dvh - var(--baharoute-panel-top) - var(--baharoute-panel-bottom-gap));
+  }
+  .baharoute-explore-host {
+    left: calc(var(--baharoute-control-inset) + var(--baharoute-safe-left));
+    right: auto;
+    bottom: auto;
+    /* Clear the brand chip + coverage badge at the top-left (like trip-host). */
+    top: var(--baharoute-panel-top);
+    width: 340px;
+    max-height: calc(100vh - var(--baharoute-panel-top) - var(--baharoute-panel-bottom-gap));
+    max-height: calc(100dvh - var(--baharoute-panel-top) - var(--baharoute-panel-bottom-gap));
+    border-radius: 14px;
+    box-shadow: var(--baharoute-shadow, 0 4px 16px rgba(0, 0, 0, 0.18));
+  }
+}
+
+/* Desktop tier (>= 1024px): a touch more width for the left primary panel now
+ * that only ONE renders at a time, and keep the right-side Map Layers clear of
+ * the controls. Tablet (768-1023px) keeps the narrower 340/360 widths above. */
+@media (min-width: 1024px) {
+  .baharoute-trip-host,
+  .baharoute-explore-host {
+    width: 360px;
+  }
+  .baharoute-insights-host {
+    width: 380px;
+  }
+}
+
+/* Historical hover tooltip (barangay name / city / class). Follows the cursor;
+   non-interactive so it never blocks map interaction. */
+.baharoute-hist-tooltip {
+  position: absolute;
+  z-index: 8;
+  transform: translate(12px, 12px);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 220px;
+  padding: 6px 9px;
+  background: var(--baharoute-surface, #fff);
+  border: 1px solid var(--baharoute-border, #cbd2d9);
+  border-radius: 8px;
+  box-shadow: var(--baharoute-shadow, 0 2px 8px rgba(0, 0, 0, 0.15));
+  font-size: 12px;
+  line-height: 1.3;
+}
+.baharoute-hist-tooltip__name {
+  font-weight: 700;
+  color: var(--baharoute-text);
+}
+.baharoute-hist-tooltip__city {
+  color: var(--baharoute-text-muted);
+}
+.baharoute-hist-tooltip__class {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* ==========================================================================
+ * Route comparison: travel-mode + preference controls, status, closure note
+ * ========================================================================== */
+.baharoute-route-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.baharoute-route-controls__label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-route-controls .baharoute-segmented {
+  flex-wrap: wrap;
+}
+.baharoute-route-controls__note {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-route-status {
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--baharoute-text-muted);
+}
+.baharoute-route-status--warn {
+  color: #7a0016;
+  font-weight: 600;
+}
+.baharoute-route-card__closure {
+  margin: 8px 0 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #7a0016;
+  background: #fbeaec;
+  border-radius: 8px;
+}
+
+/* Route segment risk explanation (reads back the existing summary). */
+.baharoute-route-card__segments {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--baharoute-text-muted, #555);
+}
+
+/* Optional external navigation handoff (secondary to Driver Mode Start). */
+.baharoute-nav-handoff {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.baharoute-nav-handoff__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--baharoute-text-muted, #555);
+}
+.baharoute-nav-handoff__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.baharoute-nav-handoff__link {
+  flex: none;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--baharoute-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--baharoute-focus-ring-color);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.baharoute-nav-handoff__link:hover {
+  background: #f1f3f5;
+}
+.baharoute-nav-handoff__note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--baharoute-text-muted, #555);
+}
+
+/* ==========================================================================
+ * Historical Explore: breadcrumb drill-down + barangay/risk mismatch note
+ * ========================================================================== */
+.baharoute-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 8px;
+  font-size: 13px;
+}
+.baharoute-breadcrumb__crumb {
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+  border-radius: 6px;
+  color: #3f2b96;
+  font-weight: 600;
+  cursor: pointer;
+}
+.baharoute-breadcrumb__crumb:disabled,
+.baharoute-breadcrumb__crumb--current {
+  color: var(--baharoute-text);
+  cursor: default;
+  font-weight: 700;
+}
+.baharoute-breadcrumb__sep {
+  color: var(--baharoute-text-muted);
+}
+.baharoute-explore__mismatch {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--baharoute-border, #cbd2d9);
+  border-radius: 8px;
+  background: #f6f4ff;
+  font-size: 13px;
+}
+.baharoute-explore__mismatch p {
+  margin: 0 0 2px;
+}
+.baharoute-explore__mismatch-sub {
+  color: var(--baharoute-text-muted);
+}
+.baharoute-explore__clear {
+  margin-top: 6px;
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 1px solid #3f2b96;
+  border-radius: 8px;
+  background: var(--baharoute-surface);
+  color: #3f2b96;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
 }

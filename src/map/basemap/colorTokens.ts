@@ -240,6 +240,31 @@ export const CURRENT_RISK_COLORS: Record<CurrentRiskLevel, ColorToken> = {
   CONFIRMED_NOT_PASSABLE: token('currentRiskNotPassable', '#7a0016'),
 } as const;
 
+/** The derived HISTORICAL flood-risk classes (distinct from CurrentRiskLevel). */
+export type HistoricalRiskClassKey = 'Low' | 'Moderate' | 'High' | 'Unknown';
+
+/**
+ * HistoricalRiskClass → reserved display color. Intentionally a DIFFERENT hue
+ * family from {@link CURRENT_RISK_COLORS} (which is a green→red current-severity
+ * ramp) so the two layers never read as the same thing when both are enabled:
+ * historical uses a cool INDIGO/VIOLET susceptibility ramp (a common convention
+ * for modeled flood-hazard depth), with Unknown a neutral grey.
+ *
+ *   Low       → light indigo
+ *   Moderate  → mid indigo
+ *   High      → deep violet
+ *   Unknown   → neutral grey (no coverage; never "safe")
+ *
+ * The colored classes are saturated (> 30%); Unknown is neutral and excluded
+ * from the reserved >30% list.
+ */
+export const HISTORICAL_RISK_COLORS: Record<HistoricalRiskClassKey, ColorToken> = {
+  Low: token('historicalLow', '#9fa8da'),
+  Moderate: token('historicalModerate', '#5c6bc0'),
+  High: token('historicalHigh', '#3f2b96'),
+  Unknown: token('historicalUnknown', '#b5b8bd'),
+} as const;
+
 /**
  * A single flat list of the reserved (saturated) flood tokens, so the
  * disjointness / saturation check can iterate them. Every entry here MUST have
@@ -261,4 +286,7 @@ export const RESERVED_COLOR_TOKENS: readonly ColorToken[] = [
   CURRENT_RISK_COLORS.LIKELY_FLOODING,
   CURRENT_RISK_COLORS.REPORTED_FLOODING,
   CURRENT_RISK_COLORS.CONFIRMED_NOT_PASSABLE,
+  HISTORICAL_RISK_COLORS.Low,
+  HISTORICAL_RISK_COLORS.Moderate,
+  HISTORICAL_RISK_COLORS.High,
 ];

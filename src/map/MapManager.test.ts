@@ -922,3 +922,44 @@ describe('MapManager.setMapContext (NCR-only ↔ nearby presentation)', () => {
     expect(mgr.getMapContext()).toBe('nearby');
   });
 });
+
+describe('MapManager.onRoutePreviewSelect (map-line selection)', () => {
+  it('resolves the clicked alternative route id to the select callback', () => {
+    const { map, factory } = makeFake();
+    // Override on/off to handle the LAYER-SCOPED form: on(type, layerId, handler).
+    const layerListeners = new Map<string, (e: unknown) => void>();
+    (map as unknown as { on: unknown }).on = (
+      type: string,
+      layer: string,
+      handler: (e: unknown) => void,
+    ) => layerListeners.set(`${type}:${layer}`, handler);
+    (map as unknown as { off: unknown }).off = (type: string, layer: string) =>
+      layerListeners.delete(`${type}:${layer}`);
+    (map as unknown as { getCanvas: () => { style: { cursor: string } } }).getCanvas =
+      () => ({ style: { cursor: '' } });
+    const mgr = new MapManager();
+    mgr.init({ container: document.createElement('div'), config: CONFIG, mapFactory: factory });
+
+    const onSelect = vi.fn();
+    const teardown = mgr.onRoutePreviewSelect(onSelect);
+
+    // Simulate a click on an alternative line carrying its routeId.
+    const clickHandler = layerListeners.get('click:route-preview-alt-line');
+    expect(clickHandler).toBeTypeOf('function');
+    clickHandler!({
+      features: [{ id: 'drive-route-alt1', properties: { routeId: 'drive-route-alt1' } }],
+    });
+    expect(onSelect).toHaveBeenCalledWith('drive-route-alt1');
+
+    teardown();
+    expect(layerListeners.has('click:route-preview-alt-line')).toBe(false);
+    mgr.destroy();
+  });
+
+  it('is a safe no-op when the map lacks layer-scoped events', () => {
+    const mgr = new MapManager();
+    // Before init the map is null → returns a no-op teardown, never throws.
+    const teardown = mgr.onRoutePreviewSelect(vi.fn());
+    expect(() => teardown()).not.toThrow();
+  });
+});

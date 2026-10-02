@@ -243,3 +243,98 @@ describe('RainfallService fail-safe + caching', () => {
     expect(listener.mock.calls[0][0].status).toBe('ok');
   });
 });
+
+// --- Hardening: dedup / fresh-cache reuse / backoff / manual cooldown --------
+
+import {
+  RAINFALL_FRESH_TTL_MS,
+  RAINFALL_MANUAL_COOLDOWN_MS,
+} from './rainfallService';
+
+/** A fetch that counts calls and resolves after a microtask with dry rain. */
+function countingOkFetch() {
+  const calls = { n: 0 };
+  const impl: FetchLike = vi.fn(async () => {
+    calls.n += 1;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => COORDS.map(() => ({ current: { interval: 900, precipitation: 0 } })),
+    };
+  });
+  return { impl, calls };
+}
+
+describe('RainfallService hardening', () => {
+  it('single-flight: concurrent refresh() calls share ONE request', async () => {
+    const { impl, calls } = countingOkFetch();
+    const svc = new RainfallService(COORDS, impl, 999999);
+    await Promise.all([svc.refresh(), svc.refresh(), svc.refresh()]);
+    expect(calls.n).toBe(1);
+    expect(svc.diagnostics().dedupedRequests).toBe(2);
+    expect(svc.diagnostics().rainfallRequests).toBe(1);
+  });
+
+  it('ensureFresh reuses a fresh snapshot (cache hit, no new request)', async () => {
+    let t = 1_000_000;
+    const { impl, calls } = countingOkFetch();
+    const svc = new RainfallService(COORDS, impl, 999999, () => t);
+    await svc.ensureFresh();
+    expect(calls.n).toBe(1);
+    // Within the TTL → reused, no fetch.
+    t += RAINFALL_FRESH_TTL_MS - 1;
+    await svc.ensureFresh();
+    expect(calls.n).toBe(1);
+    expect(svc.diagnostics().cacheHits).toBe(1);
+    // Past the TTL → refetch.
+    t += 2;
+    await svc.ensureFresh();
+    expect(calls.n).toBe(2);
+  });
+
+  it('capped exponential backoff grows on consecutive failures and resets on success', async () => {
+    let t = 1_000_000;
+    let fail = true;
+    const impl: FetchLike = vi.fn(async () => {
+      if (fail) throw new Error('429-ish');
+      return { ok: true, status: 200, json: async () => COORDS.map(() => ({})) };
+    });
+    const svc = new RainfallService(COORDS, impl, 999999, () => t);
+    await svc.refresh();
+    expect(svc.diagnostics().consecutiveFailures).toBe(1);
+    const after1 = svc.diagnostics().nextAllowedFetchAt;
+    expect(after1).toBeGreaterThan(t);
+    t += 1;
+    await svc.refresh();
+    expect(svc.diagnostics().consecutiveFailures).toBe(2);
+    // Second failure's allowed-time is further out than the first.
+    expect(svc.diagnostics().nextAllowedFetchAt - t).toBeGreaterThan(after1 - (t - 1));
+    // A success resets the backoff.
+    fail = false;
+    await svc.refresh();
+    expect(svc.diagnostics().consecutiveFailures).toBe(0);
+    expect(svc.diagnostics().nextAllowedFetchAt).toBe(0);
+  });
+
+  it('manualRefresh is throttled by the cooldown', async () => {
+    let t = 1_000_000;
+    const { impl, calls } = countingOkFetch();
+    const svc = new RainfallService(COORDS, impl, 999999, () => t);
+    expect(await svc.manualRefresh()).toBe(true);
+    expect(calls.n).toBe(1);
+    // Second manual tap within the cooldown is ignored.
+    t += RAINFALL_MANUAL_COOLDOWN_MS - 1;
+    expect(await svc.manualRefresh()).toBe(false);
+    expect(calls.n).toBe(1);
+    // After the cooldown it runs again.
+    t += 2;
+    expect(await svc.manualRefresh()).toBe(true);
+    expect(calls.n).toBe(2);
+  });
+
+  it('diagnostics reports the grid cell count', () => {
+    const { impl } = countingOkFetch();
+    const svc = new RainfallService(COORDS, impl, 999999);
+    expect(svc.diagnostics().currentGridCellCount).toBe(COORDS.length);
+  });
+});

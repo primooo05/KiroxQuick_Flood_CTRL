@@ -12,8 +12,7 @@
 import { useId, useState } from 'react';
 import {
   CURRENT_RISK_COLORS,
-  FLOOD_STATE_COLORS,
-  SUSCEPTIBILITY_COLORS,
+  HISTORICAL_RISK_COLORS,
 } from '../../map/basemap/colorTokens';
 
 interface LegendEntry {
@@ -54,16 +53,20 @@ const CURRENT_RISK_ENTRIES: readonly LegendEntry[] = [
   },
 ];
 
-/** Baseline (historical) susceptibility color family (reference layer). */
+/**
+ * Historical susceptibility color family (reference layer) — the INDIGO/VIOLET
+ * ramp used by the historical map layer, kept distinct from the current-risk
+ * green→red ramp so the two are never confused.
+ */
 const BASELINE_ENTRIES: readonly LegendEntry[] = [
-  { key: 'b-high', label: 'High', color: SUSCEPTIBILITY_COLORS.HIGH.hex },
-  { key: 'b-moderate', label: 'Moderate', color: SUSCEPTIBILITY_COLORS.MODERATE.hex },
-  { key: 'b-low', label: 'Low', color: SUSCEPTIBILITY_COLORS.LOW.hex },
+  { key: 'b-high', label: 'High', color: HISTORICAL_RISK_COLORS.High.hex },
+  { key: 'b-moderate', label: 'Moderate', color: HISTORICAL_RISK_COLORS.Moderate.hex },
+  { key: 'b-low', label: 'Low', color: HISTORICAL_RISK_COLORS.Low.hex },
   {
     key: 'b-unknown',
     label: 'Unknown',
     hint: "No data. Don't assume it's flood-free.",
-    color: FLOOD_STATE_COLORS.GRAY.hex,
+    color: HISTORICAL_RISK_COLORS.Unknown.hex,
     hatched: true,
   },
 ];
@@ -106,7 +109,7 @@ export interface MapLegendProps {
 }
 
 export function MapLegend({
-  defaultExpanded = true,
+  defaultExpanded = false,
   showCurrent = true,
   showHistorical = false,
 }: MapLegendProps) {

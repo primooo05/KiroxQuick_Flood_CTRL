@@ -14,10 +14,33 @@
 // Mode. Pure presentational: all data + the clock come from props.
 
 import { useState } from 'react';
-import type { RouteOption } from '../../services/routePlanning';
+import type { RouteOption, RoutePreference } from '../../services/routePlanning';
+import {
+  isRouteStartBlocked,
+  routeSegmentExplanation,
+} from '../../services/routePlanning';
+import {
+  SUPPORTED_TRAVEL_MODES,
+  isTravelModeSupported,
+  type TravelMode,
+} from '../../services/directions';
 import { currentRiskLabel, rainfallTrendLabel } from '../../layers/riskLabels';
 import { isDataQualityState } from '../../types/risk';
 import { formatDistance, formatDuration } from '../../simulation/navigation';
+import { buildNavHandoffLinks } from '../../services/navHandoff';
+
+/** Travel-mode button metadata (label + accessible name). */
+const TRAVEL_MODES: ReadonlyArray<{ mode: TravelMode; label: string }> = [
+  { mode: 'drive', label: 'Drive' },
+  { mode: 'bike', label: 'Bike' },
+  { mode: 'walk', label: 'Walk' },
+];
+
+/** Route-preference button metadata. */
+const PREFERENCES: ReadonlyArray<{ value: RoutePreference; label: string }> = [
+  { value: 'lowerFloodExposure', label: 'Lower flood exposure' },
+  { value: 'faster', label: 'Faster route' },
+];
 
 export interface RouteComparePanelProps {
   /** Compared options (already scored + labeled) to display, best first. */
@@ -40,6 +63,16 @@ export interface RouteComparePanelProps {
   selectedId?: string | null;
   /** Called when the user selects a route card (controlled mode). */
   onSelect?: (id: string) => void;
+  /** Active travel mode (Drive/Bike/Walk). Defaults to `drive`. */
+  mode?: TravelMode;
+  /** Called when the user picks a travel mode (recalculates routes). */
+  onModeChange?: (mode: TravelMode) => void;
+  /** Active route preference. Defaults to `lowerFloodExposure`. */
+  preference?: RoutePreference;
+  /** Called when the user changes the route preference (reranks). */
+  onPreferenceChange?: (preference: RoutePreference) => void;
+  /** True while routes are being (re)calculated (mode change / initial). */
+  finding?: boolean;
   /** Injectable clock for ETA (tests). */
   now?: () => Date;
 }
@@ -73,6 +106,11 @@ export function RouteComparePanel({
   freshnessLabel = null,
   selectedId: controlledSelectedId,
   onSelect,
+  mode = 'drive',
+  onModeChange,
+  preference = 'lowerFloodExposure',
+  onPreferenceChange,
+  finding = false,
   now = () => new Date(),
 }: RouteComparePanelProps) {
   // Uncontrolled fallback: preselect the first (best-balanced) option.
@@ -88,6 +126,8 @@ export function RouteComparePanel({
 
   const selected =
     options.find((o) => o.candidate.id === selectedId) ?? options[0] ?? null;
+  // A route through a confirmed closure is not passable → Start is blocked.
+  const startBlocked = selected != null && isRouteStartBlocked(selected);
 
   return (
     <section
@@ -111,6 +151,85 @@ export function RouteComparePanel({
           </p>
         )}
       </header>
+
+      {/* Travel mode selector (Drive / Bike / Walk). Unsupported modes are
+          disabled with an explicit note — never faked. */}
+      <div className="baharoute-route-controls">
+        <span className="baharoute-route-controls__label" id="travel-mode-label">
+          Travel mode
+        </span>
+        <div
+          className="baharoute-segmented"
+          role="group"
+          aria-labelledby="travel-mode-label"
+          data-testid="travel-mode-group"
+        >
+          {TRAVEL_MODES.map((m) => {
+            const supported = isTravelModeSupported(m.mode);
+            return (
+              <button
+                key={m.mode}
+                type="button"
+                className={`baharoute-segmented__option baharoute-focus-ring${
+                  mode === m.mode ? ' baharoute-segmented__option--active' : ''
+                }`}
+                aria-pressed={mode === m.mode}
+                disabled={!supported}
+                title={supported ? undefined : 'Not available with current routing provider'}
+                data-testid={`travel-mode-${m.mode}`}
+                onClick={() => supported && onModeChange?.(m.mode)}
+              >
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+        {SUPPORTED_TRAVEL_MODES.length < TRAVEL_MODES.length && (
+          <p className="baharoute-route-controls__note" data-testid="travel-mode-unsupported-note">
+            Some modes are not available with the current routing provider.
+          </p>
+        )}
+      </div>
+
+      {/* Route preference (only reorders provider routes; never changes geometry). */}
+      <div className="baharoute-route-controls">
+        <span className="baharoute-route-controls__label" id="route-pref-label">
+          Route preference
+        </span>
+        <div
+          className="baharoute-segmented"
+          role="group"
+          aria-labelledby="route-pref-label"
+          data-testid="route-preference-group"
+        >
+          {PREFERENCES.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              className={`baharoute-segmented__option baharoute-focus-ring${
+                preference === p.value ? ' baharoute-segmented__option--active' : ''
+              }`}
+              aria-pressed={preference === p.value}
+              data-testid={`route-preference-${p.value}`}
+              onClick={() => onPreferenceChange?.(p.value)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Loading + empty states (mode change / no route for this mode). */}
+      {finding && (
+        <p className="baharoute-route-status" role="status" data-testid="routes-finding">
+          Finding routes…
+        </p>
+      )}
+      {!finding && options.length === 0 && (
+        <p className="baharoute-route-status" role="status" data-testid="routes-empty">
+          No route available for this travel mode.
+        </p>
+      )}
 
       <ul className="baharoute-route-cards" role="radiogroup" aria-label="Available routes">
         {options.map((option) => {
@@ -182,6 +301,22 @@ export function RouteComparePanel({
                   </div>
                 </dl>
 
+                <p
+                  className="baharoute-route-card__segments"
+                  data-testid={`route-segments-${candidate.id}`}
+                >
+                  {routeSegmentExplanation(risk)}
+                </p>
+
+                {risk.closureCount > 0 && (
+                  <p
+                    className="baharoute-route-card__closure"
+                    data-testid={`route-closure-${candidate.id}`}
+                  >
+                    ⛔ Confirmed closure on this route — not passable
+                  </p>
+                )}
+
                 {reasons.length > 0 && (
                   <div className="baharoute-route-card__why">
                     <span className="baharoute-route-card__why-title">Why this route?</span>
@@ -198,15 +333,53 @@ export function RouteComparePanel({
         })}
       </ul>
 
+      {selected && startBlocked && (
+        <p className="baharoute-route-status baharoute-route-status--warn" role="status" data-testid="start-blocked-note">
+          This route passes a confirmed closure and can't be started. Choose
+          another route.
+        </p>
+      )}
       <button
         type="button"
         className="baharoute-trip-panel__primary baharoute-focus-ring"
-        onClick={() => selected && onStart(selected)}
-        disabled={!selected}
+        onClick={() => selected && !startBlocked && onStart(selected)}
+        disabled={!selected || startBlocked}
         data-testid="start-route-button"
       >
-        Start
+        Start in BahaRoute Driver Mode
       </button>
+
+      {/* OPTIONAL external navigation handoff. Driver Mode above stays the
+          primary, flood-aware way to start; these open the same origin/
+          destination in a third-party maps app for users who prefer it. The
+          external app does NOT know BahaRoute's flood context — never implied
+          "safe". Omitted for a blocked (confirmed-closure) route. */}
+      {selected && !startBlocked && selected.candidate.route.length >= 2 && (
+        <div className="baharoute-nav-handoff" data-testid="nav-handoff">
+          <span className="baharoute-nav-handoff__label">Or open in</span>
+          <div className="baharoute-nav-handoff__links">
+            {buildNavHandoffLinks(
+              selected.candidate.route[0],
+              selected.candidate.route[selected.candidate.route.length - 1],
+              mode,
+            ).map((link) => (
+              <a
+                key={link.provider}
+                className="baharoute-nav-handoff__link baharoute-focus-ring"
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-testid={`nav-handoff-${link.provider}`}
+              >
+                {link.label}
+              </a>
+            ))}
+          </div>
+          <p className="baharoute-nav-handoff__note">
+            External apps don't use BahaRoute's flood information.
+          </p>
+        </div>
+      )}
     </section>
   );
 }

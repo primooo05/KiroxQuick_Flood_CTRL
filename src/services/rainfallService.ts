@@ -26,8 +26,31 @@ const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 export const RAINFALL_SOURCE_LABEL =
   'Estimated rainfall — Open-Meteo (model-based, not official PAGASA)';
 
-/** Default poll interval (~5 min, per the MVP target). */
+/** Default poll interval (~5 min, per the MVP target). The ONE place the poll
+ * cadence is defined — never scatter raw intervals through components. */
 export const RAINFALL_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * How long a successful snapshot is considered FRESH (ms). Within this window a
+ * refresh request is skipped and the cached snapshot is reused — so opening a
+ * panel, selecting a barangay, planning a route, or returning to a visible tab
+ * does NOT trigger a new Open-Meteo request. Slightly shorter than the poll
+ * interval so a scheduled poll still refreshes on time.
+ */
+export const RAINFALL_FRESH_TTL_MS = 4 * 60 * 1000;
+
+/**
+ * Minimum spacing between MANUAL refreshes (ms). A manual refresh inside this
+ * cooldown is ignored (returns the shared in-flight promise or resolves to the
+ * cached snapshot), so repeated clicks can never fan out into multiple requests.
+ */
+export const RAINFALL_MANUAL_COOLDOWN_MS = 15 * 1000;
+
+/** Base for CAPPED EXPONENTIAL backoff across CONSECUTIVE failed refreshes. */
+export const RAINFALL_BACKOFF_BASE_MS = 30 * 1000;
+
+/** Hard ceiling for the consecutive-failure backoff (ms). */
+export const RAINFALL_BACKOFF_MAX_MS = 10 * 60 * 1000;
 
 /**
  * Max coordinates per Open-Meteo request. Conservative (50) so the request URL
@@ -357,6 +380,24 @@ export async function fetchRainfall(
  * demand or on a poll timer, and never throws to callers. Subscribers are
  * notified on every snapshot change (including transitions to `stale`).
  */
+/** Dev-only diagnostics counters, exposed via {@link RainfallService.diagnostics}. */
+export interface RainfallDiagnostics {
+  /** Total actual network refreshes that ran (reached fetchRainfall). */
+  readonly rainfallRequests: number;
+  /** Refresh calls skipped because the cache was still fresh. */
+  readonly cacheHits: number;
+  /** Refresh calls that joined an existing in-flight request (single-flight). */
+  readonly dedupedRequests: number;
+  /** Epoch ms of the last network fetch attempt (null if none). */
+  readonly lastFetchAt: number | null;
+  /** Epoch ms before which a scheduled poll is suppressed by backoff (0 = none). */
+  readonly nextAllowedFetchAt: number;
+  /** Consecutive failed refreshes (drives the capped exponential backoff). */
+  readonly consecutiveFailures: number;
+  /** Number of coordinates (grid cells) sampled per full refresh. */
+  readonly currentGridCellCount: number;
+}
+
 export class RainfallService {
   private status: RainfallStatus = 'idle';
   private byBarangay: ReadonlyMap<string, RainfallSample> = new Map();
@@ -365,11 +406,27 @@ export class RainfallService {
   private controller: AbortController | null = null;
   private readonly listeners = new Set<(s: RainfallSnapshot) => void>();
 
+  /** Shared in-flight refresh promise (single-flight dedup). */
+  private inFlight: Promise<void> | null = null;
+  /** Epoch ms of the last fetch ATTEMPT (success or failure); for freshness. */
+  private lastAttemptAt = 0;
+  /** Consecutive failed refreshes, for capped exponential backoff. */
+  private consecutiveFailures = 0;
+  /** Last manual refresh time (epoch ms), for the manual cooldown. */
+  private lastManualAt = 0;
+  /** Dev diagnostics counters. */
+  private counters = { rainfallRequests: 0, cacheHits: 0, dedupedRequests: 0 };
+  /** Injectable clock (ms) so tests can drive freshness/backoff deterministically. */
+  private readonly now: () => number;
+
   constructor(
     private readonly coords: readonly SampleCoord[],
     private readonly fetchImpl: FetchLike = globalThis.fetch?.bind(globalThis) as FetchLike,
     private readonly intervalMs: number = RAINFALL_POLL_INTERVAL_MS,
-  ) {}
+    nowMs: () => number = () => Date.now(),
+  ) {
+    this.now = nowMs;
+  }
 
   /** Current immutable snapshot. */
   snapshot(): RainfallSnapshot {
@@ -377,6 +434,19 @@ export class RainfallService {
       status: this.status,
       byBarangay: this.byBarangay,
       lastUpdated: this.lastUpdated,
+    };
+  }
+
+  /** Dev-only diagnostics counters (safe to read anytime). */
+  diagnostics(): RainfallDiagnostics {
+    return {
+      rainfallRequests: this.counters.rainfallRequests,
+      cacheHits: this.counters.cacheHits,
+      dedupedRequests: this.counters.dedupedRequests,
+      lastFetchAt: this.lastAttemptAt || null,
+      nextAllowedFetchAt: this.nextAllowedFetchAt(),
+      consecutiveFailures: this.consecutiveFailures,
+      currentGridCellCount: this.coords.length,
     };
   }
 
@@ -391,18 +461,69 @@ export class RainfallService {
     for (const l of this.listeners) l(snap);
   }
 
+  /** True when the cached snapshot is still within the freshness TTL. */
+  private isFresh(): boolean {
+    return (
+      this.status === 'ok' &&
+      this.lastAttemptAt > 0 &&
+      this.now() - this.lastAttemptAt < RAINFALL_FRESH_TTL_MS
+    );
+  }
+
+  /** Epoch ms before which a scheduled poll is suppressed by failure backoff. */
+  private nextAllowedFetchAt(): number {
+    if (this.consecutiveFailures === 0) return 0;
+    const delay = Math.min(
+      RAINFALL_BACKOFF_MAX_MS,
+      RAINFALL_BACKOFF_BASE_MS * 2 ** (this.consecutiveFailures - 1),
+    );
+    return this.lastAttemptAt + delay;
+  }
+
   /**
-   * Fetches once. On success updates the cache to `ok`. On failure, retains the
-   * previous data and marks it `stale` (or `unavailable` if nothing cached
-   * yet). NEVER throws and NEVER fabricates data.
+   * Ensures reasonably fresh data WITHOUT forcing a network request: if the
+   * cached snapshot is still fresh it is reused (a cache hit, no fetch); only a
+   * stale/absent cache triggers a refresh. This is the method consumers and the
+   * visibility handler should call — route planning, panels, and tab-return all
+   * reuse the shared snapshot instead of each hitting Open-Meteo.
    */
-  async refresh(): Promise<void> {
+  async ensureFresh(): Promise<void> {
+    if (this.isFresh()) {
+      this.counters.cacheHits += 1;
+      return;
+    }
+    await this.refresh();
+  }
+
+  /**
+   * Forces one refresh. Single-flight: concurrent callers share ONE in-flight
+   * promise (never fan out into parallel Open-Meteo requests). On success the
+   * cache is `ok` and the failure backoff resets; on failure the previous data
+   * is retained and marked `stale` (or `unavailable` if nothing cached), and the
+   * consecutive-failure count grows (driving the capped exponential backoff).
+   * NEVER throws, NEVER fabricates data, NEVER flips missing data to LOW.
+   */
+  refresh(): Promise<void> {
+    // SINGLE-FLIGHT: share the running request instead of launching another.
+    if (this.inFlight) {
+      this.counters.dedupedRequests += 1;
+      return this.inFlight;
+    }
+    const run = this.runRefresh();
+    this.inFlight = run;
+    return run.finally(() => {
+      if (this.inFlight === run) this.inFlight = null;
+    });
+  }
+
+  private async runRefresh(): Promise<void> {
     if (!this.fetchImpl || this.coords.length === 0) {
       this.status = this.lastUpdated ? 'stale' : 'unavailable';
       this.emit();
       return;
     }
-    this.controller?.abort();
+    this.lastAttemptAt = this.now();
+    this.counters.rainfallRequests += 1;
     const controller = new AbortController();
     this.controller = controller;
     try {
@@ -416,6 +537,7 @@ export class RainfallService {
         // Nothing succeeded this round: retain any cached values and mark
         // stale (or unavailable if we never had data). NEVER fabricated.
         this.status = this.lastUpdated ? 'stale' : 'unavailable';
+        this.consecutiveFailures += 1;
       } else {
         // Partial or full success. MERGE onto the previous cache so barangays
         // whose batch failed this round keep their last good value rather than
@@ -426,6 +548,7 @@ export class RainfallService {
         this.lastUpdated = Math.floor(Date.now() / 1000);
         // Any successful data → ok. A partial failure does not blank the NCR.
         this.status = 'ok';
+        this.consecutiveFailures = 0; // reset backoff on any success
         if (devDiagnosticsEnabled() && batchesFailed > 0) {
           // eslint-disable-next-line no-console
           console.debug(
@@ -438,16 +561,49 @@ export class RainfallService {
       // Defensive: fetchRainfall does not throw, but keep the last good data
       // and mark stale if something unexpected propagates.
       this.status = this.lastUpdated ? 'stale' : 'unavailable';
+      this.consecutiveFailures += 1;
     } finally {
+      if (devDiagnosticsEnabled()) {
+        // eslint-disable-next-line no-console
+        console.debug(
+          `[rainfall] diagnostics ${JSON.stringify(this.diagnostics())}`,
+        );
+      }
       this.emit();
     }
   }
 
-  /** Starts polling (immediate refresh, then every `intervalMs`). */
+  /**
+   * A MANUAL refresh (user-triggered). Throttled by a cooldown so repeated
+   * taps can never fan out into multiple requests: inside the cooldown it joins
+   * any in-flight request or resolves against the current snapshot. Returns
+   * `true` if a new refresh was started, `false` if throttled/deduped.
+   */
+  async manualRefresh(): Promise<boolean> {
+    const t = this.now();
+    if (this.inFlight) {
+      await this.inFlight;
+      return false;
+    }
+    if (t - this.lastManualAt < RAINFALL_MANUAL_COOLDOWN_MS) {
+      return false;
+    }
+    this.lastManualAt = t;
+    await this.refresh();
+    return true;
+  }
+
+  /**
+   * Starts polling: an immediate refresh, then every `intervalMs`. Each tick is
+   * suppressed while a failure backoff is active (so repeated 429s do not keep
+   * hammering Open-Meteo). Idempotent.
+   */
   start(): void {
     if (this.timer) return;
     void this.refresh();
-    this.timer = setInterval(() => void this.refresh(), this.intervalMs);
+    this.timer = setInterval(() => {
+      if (this.now() >= this.nextAllowedFetchAt()) void this.refresh();
+    }, this.intervalMs);
   }
 
   /** Stops polling and aborts any in-flight request. */

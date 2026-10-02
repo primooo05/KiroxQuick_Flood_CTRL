@@ -19,9 +19,35 @@
 import type { RouteManeuver } from '../data/fixtures/pitxToMoaRoute';
 import { measureRoute, type LngLat } from '../simulation/routeGeometry';
 
-/** Mapbox Directions driving endpoint (coordinates + query appended). */
-const DIRECTIONS_BASE =
-  'https://api.mapbox.com/directions/v5/mapbox/driving';
+/** Mapbox Directions API base (profile + coordinates + query appended). */
+const DIRECTIONS_API = 'https://api.mapbox.com/directions/v5/mapbox';
+
+/**
+ * A BahaRoute travel mode. Each maps to a genuine Mapbox Directions profile:
+ *   drive → mapbox/driving, bike → mapbox/cycling, walk → mapbox/walking.
+ * All three are real, supported profiles — no faked modes.
+ */
+export type TravelMode = 'drive' | 'bike' | 'walk';
+
+/** Maps a travel mode to its Mapbox Directions profile segment. */
+export const TRAVEL_MODE_PROFILE: Record<TravelMode, string> = {
+  drive: 'driving',
+  bike: 'cycling',
+  walk: 'walking',
+};
+
+/**
+ * The travel modes genuinely supported by the current routing provider (Mapbox
+ * Directions). All three profiles exist in the Directions API, so all three are
+ * enabled. If the provider were swapped for one without a profile, remove it
+ * here and the UI disables it automatically — nothing is ever faked.
+ */
+export const SUPPORTED_TRAVEL_MODES: readonly TravelMode[] = ['drive', 'bike', 'walk'];
+
+/** True when the routing provider genuinely supports a travel mode. */
+export function isTravelModeSupported(mode: TravelMode): boolean {
+  return SUPPORTED_TRAVEL_MODES.includes(mode);
+}
 
 /** Injectable fetch (defaults to global fetch) for testability. */
 export type FetchLike = (
@@ -101,30 +127,52 @@ function toManeuvers(route: MapboxRoute): RouteManeuver[] {
   return out;
 }
 
+/** Parses a single Mapbox route object into a {@link DirectionsRoute}, or null. */
+function parseRoute(route: MapboxRoute | undefined): DirectionsRoute | null {
+  const coordinates = route?.geometry?.coordinates;
+  if (!route || !coordinates || coordinates.length < 2) return null;
+  const geometry: LngLat[] = coordinates.map(([lng, lat]) => [lng, lat]);
+  // Trust the measured geometry length for internal consistency with the
+  // simulator (which measures the same points); fall back to Mapbox's value.
+  const measuredLength = measureRoute(geometry).length;
+  const distanceM = measuredLength > 0 ? measuredLength : (route.distance ?? 0);
+  return {
+    geometry,
+    maneuvers: toManeuvers(route),
+    distanceM,
+    durationS: route.duration ?? 0,
+  };
+}
+
 /**
- * Requests a road-following driving route between two NCR points.
+ * Requests road/path-following routes between two NCR points for a given travel
+ * MODE, optionally asking the provider for ALTERNATIVES. Returns the routes the
+ * provider actually returned (up to ~3), in provider order (best first). Returns
+ * an EMPTY array on any failure (no token, network error, non-OK status,
+ * empty/!=Ok body, degenerate geometry) so the caller can fall back without
+ * throwing. Never invents routes.
  *
- * Uses `geometries=geojson` + `overview=full` for the full-resolution line and
- * `steps=true` for maneuvers. Returns `null` on any failure (no token, network
- * error, non-OK status, empty/!=Ok body, degenerate geometry) so the caller can
- * fall back without throwing.
- *
- * @param origin - `[lng, lat]` start.
- * @param destination - `[lng, lat]` end.
- * @param token - Mapbox access token (from AppConfig.tileKey).
- * @param opts - Optional injected `fetch` + abort `signal` (tests).
+ * Profiles are genuine Mapbox profiles: driving / cycling / walking. Geometry
+ * for one mode is never reused for another — each mode is a separate request.
  */
-export async function fetchDrivingRoute(
+export async function fetchDirectionsRoutes(
   origin: LngLat,
   destination: LngLat,
   token: string,
-  opts: { fetchImpl?: FetchLike; signal?: AbortSignal } = {},
-): Promise<DirectionsRoute | null> {
-  if (!token) return null;
+  opts: {
+    mode?: TravelMode;
+    alternatives?: boolean;
+    fetchImpl?: FetchLike;
+    signal?: AbortSignal;
+  } = {},
+): Promise<DirectionsRoute[]> {
+  if (!token) return [];
   const fetchImpl =
     opts.fetchImpl ?? (globalThis.fetch as unknown as FetchLike | undefined);
-  if (!fetchImpl) return null;
+  if (!fetchImpl) return [];
 
+  const mode = opts.mode ?? 'drive';
+  const profile = TRAVEL_MODE_PROFILE[mode] ?? 'driving';
   const coords = `${origin[0]},${origin[1]};${destination[0]},${destination[1]}`;
   const query = new URLSearchParams({
     geometries: 'geojson',
@@ -132,7 +180,8 @@ export async function fetchDrivingRoute(
     steps: 'true',
     access_token: token,
   });
-  const url = `${DIRECTIONS_BASE}/${coords}?${query.toString()}`;
+  if (opts.alternatives) query.set('alternatives', 'true');
+  const url = `${DIRECTIONS_API}/${profile}/${coords}?${query.toString()}`;
 
   try {
     const res = await fetchImpl(url, { signal: opts.signal });
@@ -141,35 +190,44 @@ export async function fetchDrivingRoute(
         // eslint-disable-next-line no-console
         console.warn('[directions] request failed', res.status);
       }
-      return null;
+      return [];
     }
     const body = (await res.json()) as MapboxDirectionsResponse;
-    if (body.code && body.code !== 'Ok') return null;
-    const route = body.routes?.[0];
-    const coordinates = route?.geometry?.coordinates;
-    if (!route || !coordinates || coordinates.length < 2) return null;
-
-    const geometry: LngLat[] = coordinates.map(([lng, lat]) => [lng, lat]);
-    // Trust the measured geometry length for internal consistency with the
-    // simulator (which measures the same points); fall back to Mapbox's value.
-    const measuredLength = measureRoute(geometry).length;
-    const distanceM = measuredLength > 0 ? measuredLength : (route.distance ?? 0);
+    if (body.code && body.code !== 'Ok') return [];
+    const parsed = (body.routes ?? [])
+      .map((r) => parseRoute(r))
+      .filter((r): r is DirectionsRoute => r !== null);
 
     if (devDiagnosticsEnabled()) {
       // eslint-disable-next-line no-console
       console.info(
-        `[directions] route: ${geometry.length} coords, ${Math.round(distanceM)} m`,
+        `[directions] mode=${mode} routes=${parsed.length}` +
+          (parsed[0] ? ` first=${Math.round(parsed[0].distanceM)}m` : ''),
       );
     }
-
-    return {
-      geometry,
-      maneuvers: toManeuvers(route),
-      distanceM,
-      durationS: route.duration ?? 0,
-    };
+    return parsed;
   } catch {
     // Aborted or network error: degrade gracefully.
-    return null;
+    return [];
   }
+}
+
+/**
+ * Requests a single road-following DRIVING route. Backward-compatible wrapper
+ * over {@link fetchDirectionsRoutes} (mode=drive, no alternatives) returning the
+ * first route or `null`. Kept so existing callers/tests are unchanged.
+ */
+export async function fetchDrivingRoute(
+  origin: LngLat,
+  destination: LngLat,
+  token: string,
+  opts: { fetchImpl?: FetchLike; signal?: AbortSignal } = {},
+): Promise<DirectionsRoute | null> {
+  const routes = await fetchDirectionsRoutes(origin, destination, token, {
+    mode: 'drive',
+    alternatives: false,
+    fetchImpl: opts.fetchImpl,
+    signal: opts.signal,
+  });
+  return routes[0] ?? null;
 }

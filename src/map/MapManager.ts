@@ -853,11 +853,20 @@ export class MapManager {
   private routePreviewActive = false;
 
   /** Draws a route line as a GeoJSON feature via a source's setData. */
-  private setPreviewLine(sourceId: string, geometries: ReadonlyArray<ReadonlyArray<[number, number]>>): void {
-    const features = geometries.map((coords) => ({
+  private setPreviewLine(
+    sourceId: string,
+    lines: ReadonlyArray<{ id: string; coords: ReadonlyArray<[number, number]> }>,
+  ): void {
+    const features = lines.map((line) => ({
       type: 'Feature' as const,
-      properties: {},
-      geometry: { type: 'LineString' as const, coordinates: coords as [number, number][] },
+      // `routeId` lets a click on an alternative line resolve back to its route
+      // so the map-line selection can sync with the route cards.
+      id: line.id,
+      properties: { routeId: line.id },
+      geometry: {
+        type: 'LineString' as const,
+        coordinates: line.coords as [number, number][],
+      },
     }));
     this.map?.getSource?.(sourceId)?.setData?.({
       type: 'FeatureCollection',
@@ -888,9 +897,12 @@ export class MapManager {
     if (routes.length === 0) return;
     try {
       // Alternatives first (drawn beneath), then the selected route on top.
+      // `promoteId: routeId` makes the clicked alt feature's id its routeId so a
+      // map-line click can select that route (synced with the cards).
       map.addSource(PREVIEW_ALT_SOURCE, {
         type: 'geojson',
         data: { type: 'FeatureCollection', features: [] },
+        promoteId: 'routeId',
       });
       map.addLayer({
         id: PREVIEW_ALT_LAYER,
@@ -898,6 +910,8 @@ export class MapManager {
         slot: 'middle',
         source: PREVIEW_ALT_SOURCE,
         layout: { 'line-cap': 'round', 'line-join': 'round' },
+        // A slightly wider transparent hit area is not needed; the 5px line is
+        // clickable. Keep the muted styling so the selected line dominates.
         paint: { 'line-color': PREVIEW_ALT_COLOR, 'line-width': 5, 'line-opacity': 0.45 },
       });
       map.addSource(PREVIEW_SEL_SOURCE, {
@@ -949,10 +963,12 @@ export class MapManager {
     if (!selected) return;
     const alternatives = routes.filter((r) => r.id !== selected.id);
     try {
-      this.setPreviewLine(PREVIEW_SEL_SOURCE, [selected.geometry]);
+      this.setPreviewLine(PREVIEW_SEL_SOURCE, [
+        { id: selected.id, coords: selected.geometry },
+      ]);
       this.setPreviewLine(
         PREVIEW_ALT_SOURCE,
-        alternatives.map((r) => r.geometry),
+        alternatives.map((r) => ({ id: r.id, coords: r.geometry })),
       );
     } catch {
       // Source missing (e.g. fake map): ignore.
@@ -1017,6 +1033,50 @@ export class MapManager {
   /** True while the route preview overlays are shown. */
   isRoutePreviewActive(): boolean {
     return this.routePreviewActive;
+  }
+
+  /**
+   * Binds a click handler on the ALTERNATIVE route lines so clicking an
+   * alternative on the map selects that route (synced with the route cards).
+   * The clicked feature's id is its `routeId` (via `promoteId`). Returns a
+   * teardown fn. Safe no-op on maps lacking layer-scoped click events (tests).
+   *
+   * @param onSelect - Called with the clicked route id.
+   */
+  onRoutePreviewSelect(onSelect: (routeId: string) => void): () => void {
+    const map = this.map as unknown as {
+      on?: (t: string, layer: string, l: (e: unknown) => void) => void;
+      off?: (t: string, layer: string, l: (e: unknown) => void) => void;
+      getCanvas?: () => { style: { cursor: string } };
+    } | null;
+    if (!map || typeof map.on !== 'function') return () => undefined;
+
+    const onClick = (e: unknown): void => {
+      const ev = e as {
+        features?: Array<{ id?: string | number; properties?: { routeId?: string } }>;
+      };
+      const f = ev.features?.[0];
+      const id =
+        (typeof f?.id === 'string' && f.id) ||
+        (typeof f?.properties?.routeId === 'string' && f.properties.routeId) ||
+        null;
+      if (id) onSelect(id);
+    };
+    const setCursor = (c: string): void => {
+      const canvas = map.getCanvas?.();
+      if (canvas) canvas.style.cursor = c;
+    };
+    const onEnter = (): void => setCursor('pointer');
+    const onLeave = (): void => setCursor('');
+
+    map.on('click', PREVIEW_ALT_LAYER, onClick);
+    map.on('mouseenter', PREVIEW_ALT_LAYER, onEnter);
+    map.on('mouseleave', PREVIEW_ALT_LAYER, onLeave);
+    return () => {
+      map.off?.('click', PREVIEW_ALT_LAYER, onClick);
+      map.off?.('mouseenter', PREVIEW_ALT_LAYER, onEnter);
+      map.off?.('mouseleave', PREVIEW_ALT_LAYER, onLeave);
+    };
   }
 
   /** Delegates to the underlying map's `setPitch`. Safe no-op if unavailable. */

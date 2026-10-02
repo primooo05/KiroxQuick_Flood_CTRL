@@ -37,6 +37,19 @@ import { aggregateReportsByBarangay } from './reportResolution';
 import { dataFreshnessFor } from '../layers/riskLabels';
 import { barangayToGridCell, rainfallGridSamples } from './rainfallGrid';
 
+/**
+ * Dev-only diagnostics toggle (mirrors rainfallService): on under Vite dev,
+ * suppressed under test so CI/test output stays clean.
+ */
+function devDiagnosticsEnabled(): boolean {
+  try {
+    const env = (import.meta as { env?: { DEV?: boolean; MODE?: string } }).env;
+    return Boolean(env?.DEV) && env?.MODE !== 'test';
+  } catch {
+    return false;
+  }
+}
+
 /** The public status the UI renders (compact status pill + freshness). */
 export interface RiskControllerStatus {
   readonly rainfall: RainfallSnapshot['status'];
@@ -91,8 +104,17 @@ export class BarangayRiskController {
   private assessments: Map<string, BarangayRiskAssessment> = new Map();
   private reports: readonly CommunityReport[];
   private officials: readonly OfficialStatus[];
+  /**
+   * Optional listener invoked with the current community reports whenever they
+   * change at runtime (e.g. after {@link addReport}). MapView uses it to refresh
+   * the community-reports marker source so a new report appears on the map. The
+   * controller owns no rendering, so this stays a pure callback seam.
+   */
+  private reportsListener: ((reports: readonly CommunityReport[]) => void) | null = null;
   private map: FeatureStateMap | null = null;
   private unsubscribe: (() => void) | null = null;
+  /** Bound visibilitychange handler (installed while polling). */
+  private visibilityHandler: (() => void) | null = null;
   private readonly listeners = new Set<(s: RiskControllerStatus) => void>();
   private lastSnapshot: RainfallSnapshot | null = null;
   /**
@@ -103,6 +125,14 @@ export class BarangayRiskController {
   private rainfallByBarangay: ReadonlyMap<string, RainfallSample> = new Map();
   /** Selected timeline step; the map paints the risk projected for this step. */
   private timelineStep: TimelineStep = 'now';
+  /**
+   * The LAST computed display-risk snapshot actually sent to the map (PSGC →
+   * level). Retained so {@link repaint} can re-apply it verbatim once the
+   * GeoJSON source finishes parsing — Mapbox silently drops `setFeatureState`
+   * calls made before a feature exists in the source, so an early paint (on
+   * attach / first poll) can be lost and must be re-applied on `sourcedata`.
+   */
+  private lastRiskByBarangay: ReadonlyMap<string, CurrentRiskLevel> = new Map();
 
   constructor(options: RiskControllerOptions = {}) {
     this.reports = options.reports ?? [];
@@ -142,6 +172,7 @@ export class BarangayRiskController {
       this.emitStatus();
     });
     this.rainfall.start();
+    this.installVisibilityHandling();
   }
 
   /** Stops polling and releases the subscription. */
@@ -149,6 +180,50 @@ export class BarangayRiskController {
     this.rainfall.stop();
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.removeVisibilityHandling();
+  }
+
+  /**
+   * Forces a one-off rainfall refresh (manual, throttled) and reuses the shared
+   * single-flight promise — a convenience passthrough for any UI "refresh"
+   * affordance so it can never fan out into multiple Open-Meteo requests.
+   */
+  async refreshNow(): Promise<void> {
+    await this.rainfall.manualRefresh();
+  }
+
+  /** Dev diagnostics passthrough (counters for API-usage debugging). */
+  rainfallDiagnostics(): ReturnType<RainfallService['diagnostics']> {
+    return this.rainfall.diagnostics();
+  }
+
+  /**
+   * Pauses polling while the tab is hidden and resumes on return. On resume it
+   * calls `ensureFresh()` (NOT a forced fetch): if the cached snapshot is still
+   * fresh it is reused with no network request; only genuinely stale data
+   * triggers a refresh. No-op outside a DOM environment (tests/SSR).
+   */
+  private installVisibilityHandling(): void {
+    const doc = (globalThis as { document?: Document }).document;
+    if (!doc || typeof doc.addEventListener !== 'function') return;
+    const handler = (): void => {
+      if (doc.visibilityState === 'hidden') {
+        this.rainfall.stop();
+      } else {
+        this.rainfall.start(); // idempotent; resumes the poll timer
+        void this.rainfall.ensureFresh();
+      }
+    };
+    this.visibilityHandler = handler;
+    doc.addEventListener('visibilitychange', handler);
+  }
+
+  private removeVisibilityHandling(): void {
+    const doc = (globalThis as { document?: Document }).document;
+    if (doc && this.visibilityHandler) {
+      doc.removeEventListener('visibilitychange', this.visibilityHandler);
+    }
+    this.visibilityHandler = null;
   }
 
   /** Subscribes to status changes; returns an unsubscribe fn. */
@@ -226,7 +301,6 @@ export class BarangayRiskController {
    * never a classified severity — this is what fixes the grey-sheet artifact.
    */
   private paint(): void {
-    if (!this.map) return;
     const now = Math.floor(Date.now() / 1000);
     const step = this.timelineStep;
     const riskByBarangay = new Map<string, CurrentRiskLevel>();
@@ -245,7 +319,71 @@ export class BarangayRiskController {
         );
       }
     }
-    applyBarangayRiskStates(this.map, riskByBarangay);
+    // Retain the snapshot so it can be re-applied on source-ready (repaint()).
+    this.lastRiskByBarangay = riskByBarangay;
+    if (this.map) applyBarangayRiskStates(this.map, riskByBarangay);
+    this.logDiagnostics(riskByBarangay);
+  }
+
+  /**
+   * Re-applies the LAST computed risk snapshot to the map via feature-state,
+   * without recomputing. MapView calls this when the barangay GeoJSON source
+   * has finished loading (`sourcedata` / `idle`), because feature-state written
+   * before the source parsed its features is silently dropped by Mapbox — this
+   * is the fix for "Live — updated Just now" showing no polygon colors. Safe
+   * no-op before a map is attached or before the first paint.
+   */
+  repaint(): void {
+    if (!this.map) return;
+    if (this.lastRiskByBarangay.size === 0) {
+      // Nothing painted yet: compute + apply now.
+      this.paint();
+      return;
+    }
+    applyBarangayRiskStates(this.map, this.lastRiskByBarangay);
+  }
+
+  /**
+   * Dev-only pipeline diagnostics (suppressed under test/prod): rainfall grid
+   * cell count, valid samples, barangays assigned a sample, total NCR barangays
+   * processed, and the display risk-state histogram. Emitted once per paint so
+   * a live refresh's health is observable without opening a debugger.
+   */
+  private logDiagnostics(riskByBarangay: ReadonlyMap<string, CurrentRiskLevel>): void {
+    if (!devDiagnosticsEnabled()) return;
+    const snap = this.lastSnapshot;
+    const gridCells = snap ? snap.byBarangay.size : 0;
+    let validSamples = 0;
+    if (snap) {
+      for (const s of snap.byBarangay.values()) {
+        if (s.nowMmHr !== null || s.next30MmHr !== null || s.next60MmHr !== null) {
+          validSamples += 1;
+        }
+      }
+    }
+    const counts: Record<CurrentRiskLevel, number> = {
+      LOW: 0,
+      ELEVATED: 0,
+      HIGH: 0,
+      LIKELY_FLOODING: 0,
+      REPORTED_FLOODING: 0,
+      CONFIRMED_NOT_PASSABLE: 0,
+      UNKNOWN: 0,
+      STALE: 0,
+    };
+    for (const level of riskByBarangay.values()) counts[level] += 1;
+    /* eslint-disable no-console */
+    console.debug(
+      `[risk] gridCells=${gridCells} validSamples=${validSamples} ` +
+        `barangaysAssigned=${this.rainfallByBarangay.size} totalBarangays=${riskByBarangay.size}`,
+    );
+    console.debug(
+      `[risk] LOW=${counts.LOW} ELEVATED=${counts.ELEVATED} HIGH=${counts.HIGH} ` +
+        `LIKELY_FLOODING=${counts.LIKELY_FLOODING} REPORTED_FLOODING=${counts.REPORTED_FLOODING} ` +
+        `CONFIRMED_CLOSURE=${counts.CONFIRMED_NOT_PASSABLE} UNKNOWN=${counts.UNKNOWN} ` +
+        `STALE=${counts.STALE} TOTAL=${riskByBarangay.size}`,
+    );
+    /* eslint-enable no-console */
   }
 
   /** The current assessment for a barangay (or undefined). */
@@ -311,6 +449,26 @@ export class BarangayRiskController {
     this.recompute();
     this.paint();
     this.emitStatus();
+    this.reportsListener?.(this.reports);
+  }
+
+  /** The current community reports (seed + any added at runtime). */
+  communityReports(): readonly CommunityReport[] {
+    return this.reports;
+  }
+
+  /**
+   * Subscribes to community-report changes (fired by {@link addReport}). The
+   * listener receives the full current report list. Returns an unsubscribe fn.
+   * Only one listener is retained (the map refresh); re-subscribing replaces it.
+   */
+  onReportsChanged(
+    listener: (reports: readonly CommunityReport[]) => void,
+  ): () => void {
+    this.reportsListener = listener;
+    return () => {
+      if (this.reportsListener === listener) this.reportsListener = null;
+    };
   }
 
   /**

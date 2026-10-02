@@ -27,3 +27,10 @@ pnpm-debug.log*
 
 # Test / coverage
 coverage
+
+# Historical flood-risk preprocessing — do NOT commit the bulky raw source data
+# (~90 MB of Project NOAH shapefiles) or the regenerable intermediate outputs.
+# The compact runtime assets live in src/data/historical/ and ARE committed.
+data-processing/raw/
+data-processing/out/
+data-processing/**/__pycache__/

@@ -92,12 +92,13 @@ describe('MapLegend', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it('is expanded by default so current flood risk is the primary visible legend', () => {
+  it('is COLLAPSED by default (compact legend) and expands on toggle', async () => {
+    const user = userEvent.setup();
     render(<MapLegend showCurrent />);
-    expect(screen.getByTestId('map-legend-toggle')).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    );
+    const toggle = screen.getByTestId('map-legend-toggle');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('never uses banned safety language', () => {

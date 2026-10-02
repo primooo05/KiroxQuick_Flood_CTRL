@@ -13,6 +13,10 @@ import {
   FLOOD_STATE_COLORS,
 } from '../../map/basemap/colorTokens';
 import { formatRelativeTime } from '../../layers/riskLabels';
+import {
+  reportFreshness,
+  reportFreshnessLabel,
+} from '../../services/reportResolution';
 import { Disclaimer } from './Disclaimer';
 
 export interface ReportPopupProps {
@@ -88,6 +92,18 @@ export function ReportPopup({
 
         <dt>Reported</dt>
         <dd data-testid="report-time">{formatRelativeTime(updatedAt)}</dd>
+
+        {/* Freshness cue (community reports only). Presentation-only — it never
+            makes an unconfirmed report confirmed; expired reports already stop
+            counting toward risk via the shared TTL. */}
+        {!isOfficial && updatedAt !== null && (
+          <>
+            <dt>Freshness</dt>
+            <dd data-testid="report-freshness">
+              {reportFreshnessLabel(reportFreshness(updatedAt))}
+            </dd>
+          </>
+        )}
 
         <dt>Source</dt>
         <dd data-testid="report-source">{source}</dd>

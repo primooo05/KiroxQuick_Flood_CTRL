@@ -346,6 +346,11 @@ describe('MapView layer visibility UX (Phase 4)', () => {
   it('Historical ONLY → historical legend, labeled reference, no current-risk pill', async () => {
     const { user } = await setup();
     await user.click(screen.getByTestId('layer-checkbox-floodSusceptibility'));
+    // In this (pre-ready) phase the tall Historical Explore rail is not yet
+    // mounted, so the standalone legend still provides the historical reference
+    // key. (When the map is ready and the Explore rail occupies the left
+    // column, the legend is suppressed to avoid the orphan-card overlap — see
+    // the dedicated primaryLeftPanel/legend-suppression test.)
     const legend = screen.getByTestId('map-legend');
     expect(legend).toHaveTextContent('Historical Flood Susceptibility');
     expect(legend).toHaveTextContent(/reference|historical/i);

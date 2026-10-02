@@ -69,3 +69,34 @@ describe('aggregateReportsByBarangay', () => {
     expect(map.size).toBe(0);
   });
 });
+
+import {
+  reportFreshness,
+  reportFreshnessLabel,
+  REPORT_FRESH_SECONDS,
+} from './reportResolution';
+
+describe('reportFreshness (presentation-only TTL cue)', () => {
+  it('is fresh within the first third of the TTL window', () => {
+    expect(reportFreshness(NOW - 60, NOW)).toBe('fresh');
+    expect(reportFreshness(NOW - REPORT_FRESH_SECONDS, NOW)).toBe('fresh');
+  });
+
+  it('is aging past the first third but within the TTL', () => {
+    expect(reportFreshness(NOW - (REPORT_FRESH_SECONDS + 60), NOW)).toBe('aging');
+    expect(reportFreshness(NOW - (REPORT_TTL_SECONDS - 60), NOW)).toBe('aging');
+  });
+
+  it('is expired once older than the TTL', () => {
+    expect(reportFreshness(NOW - (REPORT_TTL_SECONDS + 60), NOW)).toBe('expired');
+  });
+
+  it('labels never claim verification or safety', () => {
+    for (const f of ['fresh', 'aging', 'expired'] as const) {
+      const label = reportFreshnessLabel(f).toLowerCase();
+      expect(label).not.toContain('confirmed');
+      expect(label).not.toContain('verified');
+      expect(label).not.toContain('safe');
+    }
+  });
+});

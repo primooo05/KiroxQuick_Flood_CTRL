@@ -5,7 +5,14 @@
 // non-Ok body, or degenerate geometry.
 
 import { describe, it, expect, vi } from 'vitest';
-import { fetchDrivingRoute, type FetchLike } from './directions';
+import {
+  fetchDrivingRoute,
+  fetchDirectionsRoutes,
+  isTravelModeSupported,
+  SUPPORTED_TRAVEL_MODES,
+  TRAVEL_MODE_PROFILE,
+  type FetchLike,
+} from './directions';
 
 const ORIGIN: [number, number] = [121.0, 14.6];
 const DEST: [number, number] = [121.05, 14.62];
@@ -97,5 +104,63 @@ describe('fetchDrivingRoute', () => {
       throw new Error('network down');
     });
     expect(await fetchDrivingRoute(ORIGIN, DEST, 'token', { fetchImpl })).toBeNull();
+  });
+});
+
+describe('travel-mode support (no fake modes)', () => {
+  it('supports drive/bike/walk (Mapbox driving/cycling/walking profiles)', () => {
+    expect(SUPPORTED_TRAVEL_MODES).toEqual(['drive', 'bike', 'walk']);
+    expect(isTravelModeSupported('drive')).toBe(true);
+    expect(isTravelModeSupported('bike')).toBe(true);
+    expect(isTravelModeSupported('walk')).toBe(true);
+    expect(TRAVEL_MODE_PROFILE).toEqual({
+      drive: 'driving',
+      bike: 'cycling',
+      walk: 'walking',
+    });
+  });
+});
+
+describe('fetchDirectionsRoutes (profiles + alternatives)', () => {
+  const TWO_ROUTE_BODY = {
+    code: 'Ok',
+    routes: [GOOD_BODY.routes[0], GOOD_BODY.routes[0]],
+  };
+
+  it('uses the cycling profile + alternatives=true in the URL for bike', async () => {
+    const fetchImpl = jsonFetch(TWO_ROUTE_BODY);
+    await fetchDirectionsRoutes(ORIGIN, DEST, 'token', {
+      mode: 'bike',
+      alternatives: true,
+      fetchImpl,
+    });
+    const url = (fetchImpl as unknown as { mock: { calls: string[][] } }).mock.calls[0][0];
+    expect(url).toContain('/mapbox/cycling/');
+    expect(url).toContain('alternatives=true');
+  });
+
+  it('uses the walking profile for walk', async () => {
+    const fetchImpl = jsonFetch(TWO_ROUTE_BODY);
+    await fetchDirectionsRoutes(ORIGIN, DEST, 'token', { mode: 'walk', fetchImpl });
+    const url = (fetchImpl as unknown as { mock: { calls: string[][] } }).mock.calls[0][0];
+    expect(url).toContain('/mapbox/walking/');
+  });
+
+  it('returns every route the provider returned (up to the alternatives)', async () => {
+    const routes = await fetchDirectionsRoutes(ORIGIN, DEST, 'token', {
+      mode: 'drive',
+      alternatives: true,
+      fetchImpl: jsonFetch(TWO_ROUTE_BODY),
+    });
+    expect(routes.length).toBe(2);
+  });
+
+  it('returns an empty array on failure (never throws / never fakes)', async () => {
+    expect(
+      await fetchDirectionsRoutes(ORIGIN, DEST, '', { fetchImpl: jsonFetch(TWO_ROUTE_BODY) }),
+    ).toEqual([]);
+    expect(
+      await fetchDirectionsRoutes(ORIGIN, DEST, 'token', { fetchImpl: jsonFetch({}, false, 500) }),
+    ).toEqual([]);
   });
 });

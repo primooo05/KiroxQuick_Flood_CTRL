@@ -112,6 +112,28 @@ export function barangayRiskFillOpacityExpression(): unknown {
   ];
 }
 
+/**
+ * A DIMMED variant of the current-risk fill opacity, used PURELY for visual
+ * co-existence when BOTH the current and historical layers are enabled and the
+ * user is focused on the Historical tab. The current (green→red) fill recedes
+ * to a faint overlay so it does not stack with the historical (indigo/violet)
+ * fill into a muddy double-fill. Paint-only — no data/feature-state change.
+ * Classified levels keep a small floor so no polygon becomes invisible.
+ */
+export function barangayRiskFillOpacityDimmedExpression(): unknown {
+  const state = ['feature-state', BARANGAY_RISK_STATE_KEY];
+  return [
+    'case',
+    ['==', state, 'UNKNOWN'],
+    0.04,
+    ['==', state, null],
+    0.04,
+    ['==', state, 'STALE'],
+    0.06,
+    0.12,
+  ];
+}
+
 /** The Mapbox GL JS GeoJSON source spec (structural). */
 export interface BarangayRiskSourceSpec {
   type: 'geojson';

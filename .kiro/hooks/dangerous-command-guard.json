@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Dangerous Command Guard",
+      "trigger": "PreToolUse",
+      "description": "Prompts for confirmation before destructive shell commands (rm -rf, force push, reset --hard, git clean, mkfs, dd) run.",
+      "matcher": "execute_bash|control_bash_process",
+      "action": {
+        "type": "command",
+        "command": "python3 -c \"import sys,json,re; d=json.load(sys.stdin); c=(d.get('tool_input') or d.get('toolInput') or {}); cmd=c.get('command','') if isinstance(c,dict) else str(c); pats=[r'rm\\s+-rf?\\s+(/|~|\\*|\\.\\s*$)', r'git\\s+push\\s+.*--force\\b', r'git\\s+push\\s+.*-f\\b', r'git\\s+reset\\s+--hard', r'git\\s+clean\\s+-[a-z]*f', r'\\bmkfs\\b', r'\\bdd\\s+if=', r':\\s*>\\s*/', r'chmod\\s+-R\\s+777\\s+/']; hit=next((p for p in pats if re.search(p,cmd)),None); print(json.dumps({'hookSpecificOutput':{'permissionDecision':'ask','permissionDecisionReason':'Potentially destructive command matched guard pattern; confirm before running.'}})) if hit else None; sys.exit(0)\"",
+        "timeout": 10
+      }
+    }
+  ]
+}

@@ -76,3 +76,83 @@ describe('RouteComparePanel', () => {
     expect(onBack).toHaveBeenCalled();
   });
 });
+
+describe('RouteComparePanel — travel mode + preference controls', () => {
+  it('shows Drive/Bike/Walk with Drive active by default and fires onModeChange', async () => {
+    const options = await demoOptions();
+    const onModeChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RouteComparePanel
+        options={options}
+        onStart={vi.fn()}
+        onBack={vi.fn()}
+        onModeChange={onModeChange}
+      />,
+    );
+    expect(screen.getByTestId('travel-mode-group')).toBeInTheDocument();
+    expect(screen.getByTestId('travel-mode-drive')).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByTestId('travel-mode-bike'));
+    expect(onModeChange).toHaveBeenCalledWith('bike');
+  });
+
+  it('shows route-preference controls (Lower flood exposure default) and fires onPreferenceChange', async () => {
+    const options = await demoOptions();
+    const onPreferenceChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <RouteComparePanel
+        options={options}
+        onStart={vi.fn()}
+        onBack={vi.fn()}
+        preference="lowerFloodExposure"
+        onPreferenceChange={onPreferenceChange}
+      />,
+    );
+    expect(
+      screen.getByTestId('route-preference-lowerFloodExposure'),
+    ).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByTestId('route-preference-faster'));
+    expect(onPreferenceChange).toHaveBeenCalledWith('faster');
+  });
+
+  it('shows a Finding routes… state while finding', () => {
+    render(<RouteComparePanel options={[]} onStart={vi.fn()} onBack={vi.fn()} finding />);
+    expect(screen.getByTestId('routes-finding')).toBeInTheDocument();
+  });
+
+  it('shows "No route available for this travel mode." when empty and not finding', () => {
+    render(<RouteComparePanel options={[]} onStart={vi.fn()} onBack={vi.fn()} />);
+    expect(screen.getByTestId('routes-empty')).toBeInTheDocument();
+  });
+});
+
+describe('RouteComparePanel — confirmed closure blocks Start', () => {
+  /** Options where the (only) route passes a confirmed closure. */
+  async function closedOptions() {
+    const candidate = (await planRoutes(PITX, MOA))[0];
+    const closed = new Set<string>();
+    compareRoutes([candidate], {
+      riskByBarangay: (psgc) => {
+        closed.add(psgc);
+        return 'LOW';
+      },
+    });
+    return compareRoutes([candidate], { closedBarangays: closed });
+  }
+
+  it('disables Start + shows a closure note when the selected route is closed', async () => {
+    const options = await closedOptions();
+    const onStart = vi.fn();
+    const user = userEvent.setup();
+    render(<RouteComparePanel options={options} onStart={onStart} onBack={vi.fn()} />);
+    expect(screen.getByTestId('start-blocked-note')).toBeInTheDocument();
+    const startBtn = screen.getByTestId('start-route-button') as HTMLButtonElement;
+    expect(startBtn.disabled).toBe(true);
+    await user.click(startBtn);
+    expect(onStart).not.toHaveBeenCalled();
+    expect(
+      screen.getByTestId(`route-closure-${options[0].candidate.id}`),
+    ).toBeInTheDocument();
+  });
+});

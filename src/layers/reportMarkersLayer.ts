@@ -87,6 +87,32 @@ export interface PointLayerMapAdapter {
   addSource(id: string, source: PointSourceSpec): void;
 }
 
+/** A GeoJSON source whose data can be replaced at runtime (Mapbox-compatible). */
+export interface UpdatableGeoJSONSource {
+  setData(data: GeoJSON.FeatureCollection): void;
+}
+
+/** The minimal map surface for refreshing an installed point source. */
+export interface PointSourceUpdateMap {
+  getSource(id: string): UpdatableGeoJSONSource | undefined;
+}
+
+/**
+ * Replaces the community-reports source data at runtime so a newly submitted
+ * report appears without reinstalling the layer. Reuses the same projection as
+ * the initial install ({@link communityReportsToGeoJSON}); a no-op if the source
+ * is not present yet. Visibility is untouched — the caller decides whether to
+ * reveal the layer.
+ */
+export function updateCommunityReportsSource(
+  map: PointSourceUpdateMap,
+  reports: readonly CommunityReport[],
+): void {
+  const source = map.getSource(COMMUNITY_REPORTS_SOURCE_ID);
+  if (!source) return;
+  source.setData(communityReportsToGeoJSON(reports));
+}
+
 /**
  * Builds the community-reports circle layer. Reports are drawn as SMALLER
  * circles colored by their reported state, with a DASHED-look thin white ring —

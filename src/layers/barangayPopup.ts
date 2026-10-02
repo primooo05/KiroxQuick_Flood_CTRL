@@ -76,7 +76,17 @@ export function installBarangayPopup(
   map: BarangayPopupMap,
   resolveInfo: ResolveBarangayInfo,
   renderPanel: RenderBarangayPanel,
+  /**
+   * Additional barangay-polygon fill layer ids to also listen on. A click only
+   * fires for a VISIBLE layer, so binding just the current-risk fill would make
+   * barangay selection dead when only the Historical layer is shown. Passing
+   * the historical fill id here keeps selection working in Historical-only mode
+   * (the same PSGC feature id is resolved either way).
+   */
+  extraLayerIds: readonly string[] = [],
 ): UninstallBarangayPopup {
+  const layerIds = [BARANGAY_RISK_FILL_LAYER_ID, ...extraLayerIds];
+
   const onClick = (event: BarangayLayerClickEvent): void => {
     const psgc = psgcFromFeature(event.features?.[0]);
     if (!psgc) return;
@@ -92,13 +102,17 @@ export function installBarangayPopup(
   const onEnter = (): void => setCursor('pointer');
   const onLeave = (): void => setCursor('');
 
-  map.on('click', BARANGAY_RISK_FILL_LAYER_ID, onClick);
-  map.on('mouseenter', BARANGAY_RISK_FILL_LAYER_ID, onEnter);
-  map.on('mouseleave', BARANGAY_RISK_FILL_LAYER_ID, onLeave);
+  for (const id of layerIds) {
+    map.on('click', id, onClick);
+    map.on('mouseenter', id, onEnter);
+    map.on('mouseleave', id, onLeave);
+  }
 
   return () => {
-    map.off('click', BARANGAY_RISK_FILL_LAYER_ID, onClick);
-    map.off('mouseenter', BARANGAY_RISK_FILL_LAYER_ID, onEnter);
-    map.off('mouseleave', BARANGAY_RISK_FILL_LAYER_ID, onLeave);
+    for (const id of layerIds) {
+      map.off('click', id, onClick);
+      map.off('mouseenter', id, onEnter);
+      map.off('mouseleave', id, onLeave);
+    }
   };
 }

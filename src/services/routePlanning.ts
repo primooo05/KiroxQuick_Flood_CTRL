@@ -30,7 +30,20 @@ import { PITX_TO_MOA_REROUTES } from '../data/fixtures/floodReroutes';
 import { measureRoute, type LngLat } from '../simulation/routeGeometry';
 import { SIM_SPEED_MPS } from '../simulation/DriveSimulator';
 import { resolveBarangayForPoint } from './reportResolution';
-import { fetchDrivingRoute, type FetchLike } from './directions';
+import {
+  fetchDirectionsRoutes,
+  type FetchLike,
+  type TravelMode,
+} from './directions';
+
+export type { TravelMode };
+
+/**
+ * The user's optional route preference. `lowerFloodExposure` (default) ranks by
+ * flood exposure first; `faster` ranks by travel time first. Preference only
+ * REORDERS the provider's routes — it never changes geometry or invents routes.
+ */
+export type RoutePreference = 'lowerFloodExposure' | 'faster';
 
 /** A concrete, drivable candidate route. */
 export interface RouteCandidate {
@@ -138,7 +151,16 @@ export interface PlanRoutesOptions {
   readonly mapboxToken?: string;
   /** Injectable fetch for the Directions request (tests). */
   readonly fetchImpl?: FetchLike;
+  /** Travel mode. Defaults to `drive`. Bike/Walk request cycling/walking. */
+  readonly mode?: TravelMode;
 }
+
+/** A short mode-specific label prefix for generated route candidates. */
+const MODE_LABEL: Record<TravelMode, string> = {
+  drive: 'Driving',
+  bike: 'Cycling',
+  walk: 'Walking',
+};
 
 /** A last-resort straight-line candidate, used only when routing is impossible. */
 function straightLineCandidate(
@@ -180,11 +202,15 @@ export async function planRoutes(
   destination: readonly [number, number],
   options: PlanRoutesOptions = {},
 ): Promise<RouteCandidate[]> {
+  const mode: TravelMode = options.mode ?? 'drive';
   const isPitxMoa =
     (near(origin, PITX) && near(destination, MOA)) ||
     (near(origin, MOA) && near(destination, PITX));
 
-  if (isPitxMoa) {
+  // The bundled PITX→MOA demo geometry is DRIVING geometry with demo hazards;
+  // it must NOT be reused for cycling/walking (spec: never reuse driving
+  // geometry for other modes). So it only applies to drive mode.
+  if (isPitxMoa && mode === 'drive') {
     const measured = measureRoute(PITX_TO_MOA_ROUTE);
     const primary: RouteCandidate = {
       id: 'pitx-moa-primary',
@@ -199,35 +225,47 @@ export async function planRoutes(
     return alt ? [primary, alt] : [primary];
   }
 
-  // Generic NCR pair: obtain a REAL road-following route from Mapbox Directions
-  // so the simulated drive stays on roads. Straight line only as last resort.
-  const routed = await fetchDrivingRoute(
+  // Generic pair (or non-drive mode): obtain REAL path-following routes from the
+  // Mapbox Directions profile for this mode, asking for ALTERNATIVES so the user
+  // can compare up to ~3 provider routes. Geometry is never shared across modes.
+  const routed = await fetchDirectionsRoutes(
     [origin[0], origin[1]],
     [destination[0], destination[1]],
     options.mapboxToken ?? '',
-    { fetchImpl: options.fetchImpl },
+    { mode, alternatives: true, fetchImpl: options.fetchImpl },
   );
-  if (routed && routed.geometry.length >= 2) {
-    return [
-      {
-        id: 'direct-route',
-        label: 'Driving route',
-        route: routed.geometry,
-        maneuvers: routed.maneuvers,
-        distanceM: routed.distanceM,
-        // Prefer Mapbox's duration when present; else derive from sim speed.
-        durationS:
-          routed.durationS > 0
-            ? routed.durationS
-            : SIM_SPEED_MPS > 0
-              ? routed.distanceM / SIM_SPEED_MPS
-              : 0,
-        hazards: [],
-      },
-    ];
+  if (routed.length > 0) {
+    return routed.map((r, i) => ({
+      id: i === 0 ? `${mode}-route` : `${mode}-route-alt${i}`,
+      label: i === 0 ? `${MODE_LABEL[mode]} route` : `${MODE_LABEL[mode]} alternative ${i}`,
+      route: r.geometry,
+      maneuvers: r.maneuvers,
+      distanceM: r.distanceM,
+      // Prefer the provider's duration when present; else derive from sim speed
+      // (a coarse fallback used only when the provider omits duration).
+      durationS:
+        r.durationS > 0
+          ? r.durationS
+          : SIM_SPEED_MPS > 0
+            ? r.distanceM / SIM_SPEED_MPS
+            : 0,
+      hazards: [],
+    }));
   }
 
+  // Last resort only when routing is impossible (no token / network error): a
+  // single straight-line candidate so the flow still completes. Not a fake
+  // "alternative" — it is the sole candidate.
   return [straightLineCandidate(origin, destination)];
+}
+
+/**
+ * True when a route must be BLOCKED from Start because it passes through a
+ * confirmed closure (not passable). Preserves the existing closure semantics:
+ * a confirmed closure is authoritative. Data-quality/other states never block.
+ */
+export function isRouteStartBlocked(option: RouteOption): boolean {
+  return option.risk.closureCount > 0;
 }
 
 /** Maps a demo hazard's reported state to a current-risk level. */
@@ -346,19 +384,46 @@ function pointAlongSafe(
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
 }
 
+/** Whether a reported-flooding signal is present (REPORTED_FLOODING level). */
+function hasReportedFlooding(r: RouteRiskSummary): boolean {
+  return r.level === 'REPORTED_FLOODING';
+}
+
 /**
- * A balanced comparison score (LOWER is better). Combines travel time with
- * flood exposure so the recommendation is NOT simply the fastest route. Data-
- * quality states get a mild penalty (uncertain, not safe).
+ * A preference-aware comparison score (LOWER is better). It only REORDERS the
+ * provider's routes; it never changes geometry or invents routes.
+ *
+ * `lowerFloodExposure` (default) ranks primarily by flood exposure:
+ *   1. confirmed closures  2. reported flooding  3. predicted flood-risk
+ *   exposure (severity)  4. number of higher-risk segments  5. travel time.
+ *
+ * `faster` ranks primarily by travel time, but confirmed closures are STILL
+ * avoided (heaviest weight) and exposure remains a secondary factor:
+ *   1. confirmed closures (still avoided)  2. travel time  3. predicted exposure.
+ *
+ * Data-quality states (UNKNOWN/STALE) get a mild uncertainty penalty — never
+ * treated as LOW/safe.
  */
-function balancedScore(option: { candidate: RouteCandidate; risk: RouteRiskSummary }): number {
+function preferenceScore(
+  option: { candidate: RouteCandidate; risk: RouteRiskSummary },
+  preference: RoutePreference,
+): number {
   const timeMin = option.candidate.durationS / 60;
   const r = option.risk;
-  // Weight closures the strongest, then classified severity, then reports.
   const severity = isDataQualityState(r.level) ? 2.5 : riskSeverity(r.level);
+  // Confirmed closures dominate BOTH preferences so a closed route never wins.
+  const closurePenalty = r.closureCount * 1000;
+  const reported = hasReportedFlooding(r) ? 1 : 0;
+
+  if (preference === 'faster') {
+    // Time-first; exposure is a lighter secondary term.
+    const exposure = severity * 1.5 + r.higherRiskSegments * 1 + reported * 4;
+    return closurePenalty + timeMin + exposure;
+  }
+  // lowerFloodExposure: exposure-first, time is the final tie-breaker.
   const exposure =
-    r.closureCount * 100 + severity * 6 + r.higherRiskSegments * 3 + r.reportCount * 1.5;
-  return timeMin + exposure;
+    reported * 40 + severity * 8 + r.higherRiskSegments * 4 + r.reportCount * 1.5;
+  return closurePenalty + exposure + timeMin * 0.25;
 }
 
 /**
@@ -372,23 +437,34 @@ function balancedScore(option: { candidate: RouteCandidate; risk: RouteRiskSumma
 export function compareRoutes(
   candidates: readonly RouteCandidate[],
   ctx: RoutePlanningContext = {},
+  preference: RoutePreference = 'lowerFloodExposure',
 ): RouteOption[] {
   const scored = candidates.map((candidate) => {
     const risk = summarizeRouteRisk(candidate, ctx);
-    return { candidate, risk, score: balancedScore({ candidate, risk }) };
+    return { candidate, risk, score: preferenceScore({ candidate, risk }, preference) };
   });
   if (scored.length === 0) return [];
 
-  // Best balanced score wins the recommendation.
+  // Best preference score wins the recommendation — BUT a route through a
+  // confirmed closure is NEVER recommended. Prefer a closure-free route as the
+  // recommended one; only if EVERY route is closed does the best score win
+  // (still flagged, and Start is blocked upstream by the closure semantics).
   const sorted = [...scored].sort((a, b) => a.score - b.score);
-  const best = sorted[0];
+  const closureFree = sorted.filter((s) => s.risk.closureCount === 0);
+  const best = closureFree[0] ?? sorted[0];
+  const anyClosureFree = closureFree.length > 0;
 
   return scored.map((s) => {
+    const hasClosure = s.risk.closureCount > 0;
     const isBest = s.candidate.id === best.candidate.id;
     let recommendation: RouteOption['recommendation'];
     if (s.risk.dataUnavailable) {
       recommendation = 'unavailable';
-    } else if (isBest) {
+    } else if (hasClosure) {
+      // Never "recommended". A closed route is an alternative the UI flags +
+      // blocks from Start, regardless of how fast it is.
+      recommendation = 'alternative';
+    } else if (isBest && (!hasClosure || !anyClosureFree)) {
       recommendation = 'recommended';
     } else if (riskSeverity(s.risk.level) < riskSeverity(best.risk.level)) {
       recommendation = 'lowerRiskAlternative';
@@ -404,15 +480,21 @@ export function compareRoutes(
       candidate: s.candidate,
       risk: s.risk,
       recommendation,
-      reasons: buildReasons(s.risk, recommendation),
+      reasons: buildReasons(s.risk, recommendation, preference),
     };
   });
 }
 
-/** Builds concise, decision-focused "Why this route?" bullets. Never "safe". */
+/**
+ * Builds concise, decision-focused "Why this route?" bullets from REAL route
+ * data only (never invented, never "safe"). Recommended-route wording reflects
+ * the active preference: `faster` leads with travel time; `lowerFloodExposure`
+ * leads with flood exposure.
+ */
 function buildReasons(
   risk: RouteRiskSummary,
   recommendation: RouteOption['recommendation'],
+  preference: RoutePreference = 'lowerFloodExposure',
 ): RouteReason[] {
   const out: RouteReason[] = [];
   if (recommendation === 'unavailable' || risk.dataUnavailable) {
@@ -425,7 +507,26 @@ function buildReasons(
       text: `${risk.closureCount} confirmed closure${risk.closureCount === 1 ? '' : 's'} on this route`,
     });
   }
-  if (recommendation === 'recommended' || recommendation === 'lowerRiskAlternative') {
+  if (recommendation === 'recommended') {
+    if (preference === 'faster') {
+      out.push({ key: 'time', text: 'Shortest estimated travel time' });
+      if (risk.closureCount === 0) {
+        out.push({ key: 'noClosure', text: 'No confirmed closures' });
+      }
+      out.push({
+        key: 'exposureThreshold',
+        text: 'Flood exposure remains within the current route threshold',
+      });
+    } else {
+      out.push({ key: 'exposure', text: 'Lower predicted flood exposure' });
+      if (risk.higherRiskSegments === 0) {
+        out.push({ key: 'segments', text: 'Avoids higher-risk segments' });
+      }
+      if (risk.closureCount === 0) {
+        out.push({ key: 'noClosure', text: 'No confirmed closures' });
+      }
+    }
+  } else if (recommendation === 'lowerRiskAlternative') {
     out.push({ key: 'exposure', text: 'Lower predicted flood exposure' });
     if (risk.higherRiskSegments === 0) {
       out.push({ key: 'segments', text: 'Avoids higher-risk segments' });
@@ -448,4 +549,46 @@ function buildReasons(
     }
   }
   return out;
+}
+
+/**
+ * A short, decision-focused explanation of a route's flood-risk makeup, built
+ * ONLY from the already-computed {@link RouteRiskSummary}. This adds no new
+ * segmentation engine and makes no depth/vehicle-clearance claims — it just
+ * reads back the existing per-route signals in plain language so a commuter
+ * understands WHY a route carries its flood-risk context. Never says "safe".
+ *
+ * Precedence mirrors the risk semantics: confirmed closures first, then
+ * reported flooding, then higher-risk segments, then community reports, then a
+ * data-quality note. Returns a neutral line when there is nothing notable.
+ */
+export function routeSegmentExplanation(risk: RouteRiskSummary): string {
+  if (risk.dataUnavailable) {
+    return 'Current flood information unavailable for this route.';
+  }
+  const parts: string[] = [];
+  if (risk.closureCount > 0) {
+    parts.push(
+      `${risk.closureCount} confirmed closure${risk.closureCount === 1 ? '' : 's'} (not passable)`,
+    );
+  }
+  if (risk.level === 'REPORTED_FLOODING') {
+    parts.push('active flooding reported along the way');
+  }
+  if (risk.higherRiskSegments > 0) {
+    parts.push(
+      `${risk.higherRiskSegments} higher-risk segment${risk.higherRiskSegments === 1 ? '' : 's'}`,
+    );
+  }
+  if (risk.reportCount > 0) {
+    parts.push(
+      `${risk.reportCount} recent community report${risk.reportCount === 1 ? '' : 's'} (unconfirmed)`,
+    );
+  }
+  if (parts.length === 0) {
+    return 'No higher-risk segments, closures, or recent reports on this route.';
+  }
+  // Capitalize the first word for a clean sentence; join the rest with commas.
+  const sentence = parts.join(', ');
+  return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`;
 }

@@ -16,6 +16,46 @@ import {
 /** How long a community report stays "recent" (seconds). Older → decayed. */
 export const REPORT_TTL_SECONDS = 6 * 60 * 60; // 6 hours
 
+/**
+ * Freshness of a single community report relative to the TTL window. This is a
+ * presentation-only cue so a commuter can see how current an UNCONFIRMED report
+ * is — it does NOT change verification (reports stay unconfirmed) or escalation
+ * (expired reports already stop escalating risk via the same TTL):
+ *   - `fresh`   — within the first third of the TTL (clearly recent),
+ *   - `aging`   — within the TTL but past the first third,
+ *   - `expired` — older than the TTL (no longer counts toward risk).
+ */
+export type ReportFreshness = 'fresh' | 'aging' | 'expired';
+
+/** Age (seconds) within which a report reads as clearly fresh (TTL/3). */
+export const REPORT_FRESH_SECONDS = Math.floor(REPORT_TTL_SECONDS / 3);
+
+/**
+ * Classifies a report's freshness from its `updatedAt` (epoch seconds) against
+ * {@link REPORT_TTL_SECONDS}. Pure and deterministic; `now` is injectable.
+ */
+export function reportFreshness(
+  updatedAt: number,
+  now: number = Math.floor(Date.now() / 1000),
+): ReportFreshness {
+  const age = Math.max(0, now - updatedAt);
+  if (age > REPORT_TTL_SECONDS) return 'expired';
+  if (age <= REPORT_FRESH_SECONDS) return 'fresh';
+  return 'aging';
+}
+
+/** Short commuter-facing label for a report freshness state. */
+export function reportFreshnessLabel(freshness: ReportFreshness): string {
+  switch (freshness) {
+    case 'fresh':
+      return 'Fresh report';
+    case 'aging':
+      return 'Aging report';
+    case 'expired':
+      return 'Expired — no longer counted';
+  }
+}
+
 /** A barangay feature paired with its precomputed bounding box. */
 interface IndexedBarangay {
   readonly feature: BarangayFeature;
