@@ -19,6 +19,7 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type { MetroManilaTrafficCamera } from '../../types/camera';
 import {
   fetchWindyCameras,
@@ -88,6 +89,19 @@ export function CamButton({
   const [hasLoaded, setHasLoaded] = useState(false);
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
   const [cameraData, setCameraData] = useState<Record<string, CameraDetailData>>({});
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 767px)').matches,
+  );
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 767px)');
+    const update = (): void => setIsMobile(media.matches);
+    media.addEventListener?.('change', update);
+    return () => media.removeEventListener?.('change', update);
+  }, []);
 
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const activeDetailController = useRef<AbortController | null>(null);
@@ -197,30 +211,16 @@ export function CamButton({
     }
   };
 
-  return (
-    // Metro Manila Cam Wrapper
-    <div className="baharoute-cambutton-wrapper" onKeyDown={onKeyDown}>
-      <button
-        ref={buttonRef}
-        type="button"
-        className="baharoute-round-button baharoute-focus-ring"
-        data-testid="cambutton"
-        aria-label="Metro Manila webcams"
-        title="Metro Manila webcams"
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen((prev) => !prev)}
-      >
-        <VideoIcon />
-      </button>
-
+  const panel = (
       <div
         id={panelId}
-        className="baharoute-cam-panel"
+        className={"baharoute-cam-panel" + (isMobile ? " baharoute-cam-panel--mobile" : "")}
         data-testid="cam-panel"
         hidden={!open}
-        role="region"
+        role={isMobile ? 'dialog' : 'region'}
+        aria-modal={isMobile ? true : undefined}
         aria-label="Metro Manila webcams"
+        onKeyDown={onKeyDown}
       >
         <div className="baharoute-cam-panel__header">
           <div className="baharoute-cam-panel__title-group">
@@ -432,7 +432,40 @@ export function CamButton({
           })}
         </div>
       </div>
-    </div>
+  );
+
+  return (
+    <>
+      <div className="baharoute-cambutton-wrapper" onKeyDown={onKeyDown}>
+        <button
+          ref={buttonRef}
+          type="button"
+          className="baharoute-round-button baharoute-focus-ring"
+          data-testid="cambutton"
+          aria-label="Metro Manila webcams"
+          title="Metro Manila webcams"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((prev) => !prev)}
+        >
+          <VideoIcon />
+        </button>
+        {!isMobile && panel}
+      </div>
+      {isMobile && open && typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="baharoute-cam-modal-backdrop"
+            data-testid="cam-modal-backdrop"
+            onClick={(event) => {
+              if (event.target === event.currentTarget) close();
+            }}
+          >
+            {panel}
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 

@@ -30,10 +30,10 @@ function Harness(props: {
 }
 
 describe('RouteSearchPanel', () => {
-  it('shows a drag handle and collapses after a 75% downward drag, then reopens', () => {
+  it('sticks where the user left it after dragging and releasing', () => {
     render(<Harness />);
     const panel = screen.getByTestId('route-search-panel');
-    const handle = screen.getByRole('separator', { name: /drag down to close/i });
+    const handle = screen.getByRole('separator', { name: /drag to move baha-route panel/i });
     vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ height: 400 } as DOMRect);
     Object.defineProperty(handle, 'setPointerCapture', { value: vi.fn() });
     Object.defineProperty(handle, 'hasPointerCapture', { value: () => false });
@@ -46,12 +46,37 @@ describe('RouteSearchPanel', () => {
       });
       fireEvent(handle, event);
     };
+
+    // Initial style
+    expect(panel.style.getPropertyValue('--baharoute-trip-drag')).toBe('0px');
+
+    // Drag down by 120px
     pointer('pointerdown', 100);
-    pointer('pointermove', 400);
-    pointer('pointerup', 400);
+    pointer('pointermove', 220);
+    pointer('pointerup', 220);
+
+    // Sticks at 120px after release
+    expect(panel.style.getPropertyValue('--baharoute-trip-drag')).toBe('120px');
+
+    // Drag further down by another 50px
+    pointer('pointerdown', 220);
+    pointer('pointermove', 270);
+    pointer('pointerup', 270);
+
+    // Sticks at 170px
+    expect(panel.style.getPropertyValue('--baharoute-trip-drag')).toBe('170px');
+
+    // Drag down past 75% (>= 300px on 400px height panel) collapses into button
+    pointer('pointerdown', 270);
+    pointer('pointermove', 600);
+    pointer('pointerup', 600);
 
     expect(screen.queryByTestId('route-search-panel')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Baha-Route' }));
+    const reopenBtn = screen.getByRole('button', { name: 'Baha-Route' });
+    expect(reopenBtn).toBeInTheDocument();
+
+    // Clicking reopen restores the panel
+    fireEvent.click(reopenBtn);
     expect(screen.getByTestId('route-search-panel')).toBeInTheDocument();
   });
 
