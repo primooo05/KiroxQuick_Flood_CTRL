@@ -83,10 +83,6 @@ interface OpenMeteoCurrentRecord {
   weather_code?: number;
 }
 
-interface OpenMeteoItemResponse {
-  current?: OpenMeteoCurrentRecord;
-}
-
 function parseWeatherRecord(
   payload: unknown,
   fetchedAt: number,
