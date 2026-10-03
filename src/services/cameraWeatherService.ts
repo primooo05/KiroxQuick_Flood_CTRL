@@ -38,6 +38,9 @@ const weatherCache = new Map<string, CacheEntry>();
 /** In-flight request deduplication: key → Promise. */
 const inFlightRequests = new Map<string, Promise<CameraWeatherSnapshot>>();
 
+/** Keys currently undergoing background revalidation. */
+const revalidatingKeys = new Set<string>();
+
 /** Quantizes coordinates (~110m resolution) for stable cache keys. */
 export function coordCacheKey(longitude: number, latitude: number): string {
   return `coord:${latitude.toFixed(3)},${longitude.toFixed(3)}`;
@@ -52,6 +55,7 @@ export function lguCacheKey(cityId: string): string {
 export function clearWeatherCache(): void {
   weatherCache.clear();
   inFlightRequests.clear();
+  revalidatingKeys.clear();
 }
 
 /** Returns the count of entries in the weather cache. */
@@ -77,11 +81,6 @@ export function setCachedWeather(
   weatherCache.set(coordCacheKey(lng, lat), { snapshot, cachedAtMs });
 }
 
-interface OpenMeteoCurrentRecord {
-  temperature_2m?: number;
-  relative_humidity_2m?: number;
-  weather_code?: number;
-}
 
 function parseWeatherRecord(
   payload: unknown,
@@ -210,9 +209,10 @@ async function revalidateWeather(
   key: string,
   fetcher: typeof fetch,
 ): Promise<void> {
-  if (inFlightRequests.has(key)) return;
+  if (revalidatingKeys.has(key)) return;
+  revalidatingKeys.add(key);
 
-  const fetchPromise = (async () => {
+  (async () => {
     const [longitude, latitude] = coordinates;
     const url = buildOpenMeteoUrl([latitude], [longitude]);
     const response = await fetcher(url);
@@ -222,13 +222,13 @@ async function revalidateWeather(
     const fetchedAt = Math.floor(Date.now() / 1000);
     const snapshot = parseWeatherRecord(payload, fetchedAt);
     weatherCache.set(key, { snapshot, cachedAtMs: Date.now() });
-  })().catch(() => {
-    // Fail safe: network error on revalidation retains stale cache.
-  }).finally(() => {
-    inFlightRequests.delete(key);
-  });
-
-  inFlightRequests.set(key, fetchPromise as Promise<CameraWeatherSnapshot>);
+  })()
+    .catch(() => {
+      // Fail safe: network error on revalidation retains stale cache.
+    })
+    .finally(() => {
+      revalidatingKeys.delete(key);
+    });
 }
 
 /**

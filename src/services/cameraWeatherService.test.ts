@@ -7,8 +7,6 @@ import {
   clearWeatherCache,
   getCachedWeather,
   setCachedWeather,
-  coordCacheKey,
-  WEATHER_CACHE_TTL_MS,
   calculateHeatIndexC,
   weatherCodeLabel,
   type CameraWeatherSnapshot,
