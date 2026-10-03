@@ -111,6 +111,17 @@ import { CloseIcon } from './controls/icons';
 import { MapLegend } from './overlays/MapLegend';
 import { MarkerManager, type MarkerManagerOptions } from './markers/markerManager';
 import { mapboxMarkerFactory } from './markers/mapboxMarkerFactory';
+import { CameraMarkerManager } from './markers/cameraMarkerManager';
+import { mapboxCameraMarkerFactory } from './markers/mapboxCameraFactory';
+import {
+  clipCameraViewportToNcr,
+  fetchWindyCameraImageUrl,
+  fetchWindyCameras,
+  type CameraViewportBounds,
+  type WindyCameraSnapshot,
+} from '../services/windyCameraService';
+import { fetchCameraWeather } from '../services/cameraWeatherService';
+import { isCameraCityVisible } from '../layers/cameraWebcamLayer';
 import {
   requestLocation as defaultRequestLocation,
   type LocationResult,
@@ -412,6 +423,8 @@ export interface MapViewProps {
    * fake without a real browser Geolocation API.
    */
   requestLocation?: () => Promise<LocationResult>;
+  /** Optional same-origin camera service override, primarily for integration tests. */
+  loadCameraSnapshot?: (signal?: AbortSignal) => Promise<WindyCameraSnapshot>;
 }
 
 const noop = (): void => undefined;
@@ -493,10 +506,13 @@ export function MapView({
   dataSource,
   createMarkerManager,
   requestLocation = defaultRequestLocation,
+  loadCameraSnapshot,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const managerRef = useRef<MapManagerLike | null>(null);
   const markerManagerRef = useRef<MarkerManager | null>(null);
+  const cameraMarkerManagerRef = useRef<CameraMarkerManager | null>(null);
+  const cameraSnapshotRef = useRef<WindyCameraSnapshot | null>(null);
   const uninstallPopupRef = useRef<(() => void) | null>(null);
   const uninstallCityPopupRef = useRef<(() => void) | null>(null);
   const uninstallBarangayPopupRef = useRef<(() => void) | null>(null);
@@ -775,6 +791,8 @@ export function MapView({
       }
       markerManagerRef.current?.destroy();
       markerManagerRef.current = null;
+      cameraMarkerManagerRef.current?.destroy();
+      cameraMarkerManagerRef.current = null;
       registryRef.current = null;
       manager.destroy();
       managerRef.current = null;
@@ -783,6 +801,138 @@ export function MapView({
     // and the injected seams are treated as fixed for that lifetime.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Live camera data is an independent overlay. Query only the visible NCR
+  // viewport on map movement; open image popups renew URLs by webcam ID.
+  useEffect(() => {
+    if (phase !== 'ready') return;
+    const map = managerRef.current?.getMap?.() ?? null;
+    if (!isIntegrableMap(map)) return;
+
+    const markerManager = new CameraMarkerManager({
+      map,
+      factory: mapboxCameraMarkerFactory,
+      refreshImageUrl: (webcamId, signal) => fetchWindyCameraImageUrl(webcamId, fetch, signal),
+      loadWeather: (coordinates, signal) => fetchCameraWeather(coordinates, fetch, signal),
+      canOpenPopup: (camera) => {
+        const minimalMap = map as unknown as {
+          getZoom?: () => number;
+          getCenter?: () => { lng: number; lat: number } | [number, number];
+          getBounds?: () => { getWest(): number; getSouth(): number; getEast(): number; getNorth(): number };
+        };
+        const zoom = minimalMap.getZoom?.() ?? 12;
+        const rawCenter = minimalMap.getCenter?.();
+        const center: [number, number] | undefined = Array.isArray(rawCenter)
+          ? rawCenter
+          : rawCenter
+            ? [rawCenter.lng, rawCenter.lat]
+            : undefined;
+        const rawBounds = minimalMap.getBounds?.();
+        const bounds: [number, number, number, number] | undefined = rawBounds
+          ? [rawBounds.getWest(), rawBounds.getSouth(), rawBounds.getEast(), rawBounds.getNorth()]
+          : undefined;
+
+        return isCameraCityVisible(camera, { zoom, center, bounds });
+      },
+    });
+    cameraMarkerManagerRef.current = markerManager;
+
+    const mapWithBounds = map as IntegrableMap & {
+      getBounds?: () => { getWest(): number; getSouth(): number; getEast(): number; getNorth(): number };
+    };
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    let requestController: AbortController | null = null;
+    let requestSequence = 0;
+    let lastViewportKey = '';
+    let disposed = false;
+
+    const currentViewport = (): CameraViewportBounds | null => {
+      const bounds = mapWithBounds.getBounds?.();
+      if (!bounds) return clipCameraViewportToNcr({ west: 120.9, south: 14.34, east: 121.15, north: 14.8 });
+      return clipCameraViewportToNcr({
+        west: bounds.getWest(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        north: bounds.getNorth(),
+      });
+    };
+
+    const loadViewport = async (forceFresh = false): Promise<void> => {
+      const bounds = currentViewport();
+      if (!bounds) {
+        lastViewportKey = 'outside-ncr';
+        requestSequence += 1;
+        requestController?.abort();
+        requestController = null;
+        cameraSnapshotRef.current = null;
+        markerManager.setCameras([]);
+        return;
+      }
+
+      const key = [bounds.west, bounds.south, bounds.east, bounds.north]
+        .map((value) => value.toFixed(5)).join(',');
+      if (!forceFresh && key === lastViewportKey) return;
+      lastViewportKey = key;
+      const camerasAlreadyInViewport = cameraSnapshotRef.current?.cameras.filter((camera) => {
+        const [longitude, latitude] = camera.coordinates;
+        return longitude >= bounds.west && longitude <= bounds.east &&
+          latitude >= bounds.south && latitude <= bounds.north;
+      }) ?? [];
+      markerManager.setCameras(camerasAlreadyInViewport);
+      requestController?.abort();
+      const controller = new AbortController();
+      requestController = controller;
+      const sequence = ++requestSequence;
+
+      try {
+        const snapshot = loadCameraSnapshot
+          ? await loadCameraSnapshot(controller.signal)
+          : await fetchWindyCameras(fetch, controller.signal, bounds, forceFresh);
+        if (disposed || sequence !== requestSequence) return;
+        cameraSnapshotRef.current = snapshot;
+        markerManager.setCameras(snapshot.cameras);
+      } catch (error) {
+        if (disposed || sequence !== requestSequence || (error instanceof DOMException && error.name === 'AbortError')) return;
+        if (lastViewportKey === key) lastViewportKey = '';
+        cameraSnapshotRef.current = null;
+        markerManager.setCameras([]);
+      } finally {
+        if (requestController === controller) requestController = null;
+      }
+    };
+
+    const scheduleViewportLoad = (): void => {
+      const bounds = currentViewport();
+      const observedKey = bounds
+        ? [bounds.west, bounds.south, bounds.east, bounds.north].map((value) => value.toFixed(5)).join(',')
+        : 'outside-ncr';
+      if (observedKey !== lastViewportKey) {
+        requestSequence += 1;
+        requestController?.abort();
+        requestController = null;
+      }
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        void loadViewport();
+      }, 180);
+    };
+
+    map.on('moveend', scheduleViewportLoad);
+    map.on('zoomend', scheduleViewportLoad);
+    void loadViewport(true);
+
+    return () => {
+      disposed = true;
+      requestSequence += 1;
+      if (debounceTimer !== null) clearTimeout(debounceTimer);
+      requestController?.abort();
+      map.off('moveend', scheduleViewportLoad);
+      map.off('zoomend', scheduleViewportLoad);
+      markerManager.destroy();
+      cameraMarkerManagerRef.current = null;
+    };
+  }, [phase, loadCameraSnapshot]);
 
   /**
    * On ready, when a REAL (integrable) map is present, install the flood

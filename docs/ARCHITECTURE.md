@@ -40,6 +40,10 @@ No `maxBounds`/clip is emitted, so the basemap keeps rendering beyond the NCR an
 
 `src/services/env.ts` reads `VITE_MAPBOX_ACCESS_TOKEN` and returns a typed `AppConfig`. It never throws when the token is missing, so the shell can render a config-incomplete message and gate tile requests on `hasTileKey`.
 
+## Camera data integration seam
+
+`src/services/windyCameraService.ts` consumes the same-origin `/api/cameras` endpoint, normalizes Windy Webcams API v3 records, and filters them through `src/services/metroManilaCameras.ts` against the local 17-LGU boundaries. `server/windyProxy.mjs` keeps the Windy key server-side, fetches webcam metadata for the current viewport, caches each bounded result for at most five minutes, and supports fresh per-webcam image URL requests. `CameraMarkerManager` updates visible map markers, renews the open popup image in place, and loads a camera-location weather summary from Open-Meteo on popup open. This pipeline is isolated from rainfall and flood-risk services.
+
 ## Testing seams
 
 Structural interfaces (map, markers, layer adapter, data sources, geolocation) are injected in tests. This is why several source comments describe "MapLibre-compatible" structural shapes — the shapes are engine-agnostic and were preserved across the Mapbox migration; the runtime engine is Mapbox GL JS.

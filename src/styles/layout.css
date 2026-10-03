@@ -556,6 +556,103 @@ body,
   top: 10px;
   right: 10px;
 }
+
+/* --- Windy webcam markers and map popups ------------------------------- */
+.baharoute-camera-marker {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  background: #126b83;
+  box-shadow: 0 2px 8px rgba(13, 36, 48, 0.35);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.baharoute-camera-marker:hover {
+  background: #0b5064;
+  transform: scale(1.06);
+}
+.baharoute-camera-popup {
+  width: min(300px, calc(100vw - 64px));
+  max-height: min(72vh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  color: #172b36;
+  font-family: inherit;
+}
+.baharoute-camera-popup__title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  line-height: 1.3;
+}
+.baharoute-camera-popup__location,
+.baharoute-camera-popup__timestamp,
+.baharoute-camera-popup__attribution,
+.baharoute-camera-popup__weather-source {
+  margin: 0 0 8px;
+  color: #52636d;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.baharoute-camera-popup__summary {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #d9e3e7;
+  border-radius: 8px;
+  background: #f7fafb;
+}
+.baharoute-camera-popup__summary h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.baharoute-camera-popup__summary-fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.baharoute-camera-popup__summary-fields dt {
+  color: #52636d;
+}
+.baharoute-camera-popup__summary-fields dd {
+  margin: 0;
+  font-weight: 600;
+}
+.baharoute-camera-popup__weather-source {
+  margin: 8px 0 0;
+  font-size: 10px;
+}
+.baharoute-camera-popup__media {
+  overflow: hidden;
+  margin: 8px 0;
+  border-radius: 8px;
+  background: #101c22;
+}
+.baharoute-camera-popup__image,
+.baharoute-camera-popup__video {
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 0;
+}
+.baharoute-camera-popup__video {
+  height: 169px;
+}
+.baharoute-camera-popup__attribution a,
+.baharoute-camera-popup__weather-source a {
+  color: #075b75;
+  text-decoration: underline;
+}
 .baharoute-flood-popup__title {
   margin: 0 40px 8px 0;
   font-size: 18px;

@@ -13,12 +13,13 @@ export const FLOOD_REPORTS_DEMO_SOURCE = 'DEMO — current/recent report (fixtur
 /** Marks this module's contents as demo/fixture data (Req 15.2). */
 export const FLOOD_REPORTS_IS_DEMO = true;
 
-/** A recent-ish epoch (seconds) so GREEN passable demo reads as recent. */
-const RECENT = 1_700_000_000;
+/** Fixed demo epoch (seconds); deliberately old so fixtures cannot imply live data. */
+const DEMO_REPORTED_AT = 1_700_000_000;
 
 /**
- * Demo flood reports covering RED / ORANGE / YELLOW / GREEN with appropriate
- * passable flags. GREEN carries passable === true (Recently Reported Passable).
+ * Demo flood reports covering major Metro Manila roads. Coordinates and
+ * conditions are invented for UI development; they are not real observations.
+ * GREEN carries passable === true (Recently Reported Passable).
  */
 export const floodReportFixtures: FloodReport[] = [
   {
@@ -29,11 +30,11 @@ export const floodReportFixtures: FloodReport[] = [
       location: { lng: 121.101, lat: 14.648 },
       source: FLOOD_REPORTS_DEMO_SOURCE,
       dataType: 'REPORT',
-      updatedAt: RECENT,
-      verificationStatus: 'VERIFIED',
+      updatedAt: DEMO_REPORTED_AT,
+      verificationStatus: 'UNCONFIRMED',
       severity: 'reported flooding',
       depth: 0.9,
-      description: 'DEMO: reported flooding near Marikina riverbanks. Not authoritative.',
+      description: 'DEMO ONLY — invented flooding example near Marcos Highway / Marikina. Not a real observation.',
     },
   },
   {
@@ -44,11 +45,11 @@ export const floodReportFixtures: FloodReport[] = [
       location: { lng: 121.078, lat: 14.576 },
       source: FLOOD_REPORTS_DEMO_SOURCE,
       dataType: 'REPORT',
-      updatedAt: RECENT,
-      verificationStatus: 'VERIFIED',
+      updatedAt: DEMO_REPORTED_AT,
+      verificationStatus: 'UNCONFIRMED',
       severity: 'elevated flood exposure',
       depth: 0.4,
-      description: 'DEMO: elevated flood exposure reported in Pasig. Not authoritative.',
+      description: 'DEMO ONLY — invented flooding example along C-5 near Pasig. Not a real observation.',
     },
   },
   {
@@ -58,10 +59,10 @@ export const floodReportFixtures: FloodReport[] = [
       location: { lng: 120.994, lat: 14.61 },
       source: FLOOD_REPORTS_DEMO_SOURCE,
       dataType: 'REPORT',
-      updatedAt: RECENT,
-      verificationStatus: 'VERIFIED',
+      updatedAt: DEMO_REPORTED_AT,
+      verificationStatus: 'UNCONFIRMED',
       severity: 'caution',
-      description: 'DEMO: caution — minor ponding reported along España. Not authoritative.',
+      description: 'DEMO ONLY — invented minor-ponding example along España Boulevard. Not a real observation.',
     },
   },
   {
@@ -72,10 +73,53 @@ export const floodReportFixtures: FloodReport[] = [
       location: { lng: 121.028, lat: 14.556 },
       source: FLOOD_REPORTS_DEMO_SOURCE,
       dataType: 'REPORT',
-      updatedAt: RECENT,
-      verificationStatus: 'VERIFIED',
+      updatedAt: DEMO_REPORTED_AT,
+      verificationStatus: 'UNCONFIRMED',
       severity: 'recently reported passable',
-      description: 'DEMO: recently reported passable in Makati. Not authoritative.',
+      description: 'DEMO ONLY — invented passability example near EDSA / Makati. Not a real observation.',
+    },
+  },
+  {
+    id: 'demo-report-edsa-quezon-city',
+    state: 'ORANGE',
+    passable: false,
+    metadata: {
+      location: { lng: 121.056, lat: 14.637 },
+      source: FLOOD_REPORTS_DEMO_SOURCE,
+      dataType: 'REPORT',
+      updatedAt: DEMO_REPORTED_AT,
+      verificationStatus: 'UNCONFIRMED',
+      severity: 'demo elevated-water example',
+      depth: 0.35,
+      description: 'DEMO ONLY — invented elevated-water example on EDSA near Quezon Avenue. Not a real observation.',
+    },
+  },
+  {
+    id: 'demo-report-roxas-blvd',
+    state: 'YELLOW',
+    metadata: {
+      location: { lng: 120.982, lat: 14.559 },
+      source: FLOOD_REPORTS_DEMO_SOURCE,
+      dataType: 'REPORT',
+      updatedAt: DEMO_REPORTED_AT,
+      verificationStatus: 'UNCONFIRMED',
+      severity: 'demo ponding example',
+      description: 'DEMO ONLY — invented ponding example on Roxas Boulevard. Not a real observation.',
+    },
+  },
+  {
+    id: 'demo-report-commonwealth-ave',
+    state: 'RED',
+    passable: false,
+    metadata: {
+      location: { lng: 121.062, lat: 14.676 },
+      source: FLOOD_REPORTS_DEMO_SOURCE,
+      dataType: 'REPORT',
+      updatedAt: DEMO_REPORTED_AT,
+      verificationStatus: 'UNCONFIRMED',
+      severity: 'demo road-flooding example',
+      depth: 0.6,
+      description: 'DEMO ONLY — invented road-flooding example on Commonwealth Avenue. Not a real observation.',
     },
   },
 ];

@@ -54,6 +54,32 @@ export function pointInGeometry(
   return false;
 }
 
+/** True when a point lies on any outer-ring or hole boundary segment. */
+export function pointOnGeometryBoundary(
+  lng: number,
+  lat: number,
+  geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon,
+  epsilon = 1e-10,
+): boolean {
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+  for (const polygon of polygons) {
+    for (const ring of polygon) {
+      for (let i = 0; i < ring.length - 1; i += 1) {
+        const [x1, y1] = ring[i];
+        const [x2, y2] = ring[i + 1];
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const cross = (lng - x1) * dy - (lat - y1) * dx;
+        if (Math.abs(cross) > epsilon) continue;
+        const dot = (lng - x1) * dx + (lat - y1) * dy;
+        const lengthSquared = dx * dx + dy * dy;
+        if (dot >= -epsilon && dot <= lengthSquared + epsilon) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** Axis-aligned bounding box of a geometry: [minLng, minLat, maxLng, maxLat]. */
 export function bboxOf(
   geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon,

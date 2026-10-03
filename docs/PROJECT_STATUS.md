@@ -7,6 +7,8 @@
 
 Spec documents live under `.kiro/specs/<spec>/{requirements,design,tasks}.md`.
 
+Windy camera integration is implemented: a server-side API proxy, viewport-bounded metadata requests, exact NCR boundary filter, five-minute per-viewport cache, per-image seven-minute URL renewal with error recovery, and marker popups with camera location/status plus weather, Celsius temperature, and heat index summaries. The API key remains deployment configuration (`WINDY_WEBCAMS_API_KEY`).
+
 ## Milestone 1 — complete
 
 Foundation delivered and verified: React + TypeScript + Vite app, flood data model and types, demo fixtures, `LayerRegistry` with fixed z-ordering, susceptibility layer with zoom-faded translucent fills, map controls (zoom/recenter/location), overlays (disclaimer, demo badge, config-incomplete, error, loading, flood popup), responsive layout, and accessibility.

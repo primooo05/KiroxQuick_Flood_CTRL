@@ -5,7 +5,8 @@
   "type": "module",
   "description": "BahaRoute — Metro Manila (NCR) flood-aware travel decision-support map foundation.",
   "scripts": {
-    "dev": "vite",
+    "dev": "node --env-file-if-exists=.env.local scripts/dev.mjs",
+    "start": "node --env-file-if-exists=.env.local server/windyProxy.mjs",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",

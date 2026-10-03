@@ -286,8 +286,8 @@ Prerequisites: Node.js and npm.
 
 ```bash
 npm install
-cp .env.example .env.local
-# add a real Mapbox token to .env.local
+cp .env.example ..env.local
+# add a real Mapbox token to ..env.local
 npm run dev
 ```
 
