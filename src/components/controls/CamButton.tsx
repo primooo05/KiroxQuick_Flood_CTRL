@@ -198,6 +198,7 @@ export function CamButton({
   };
 
   return (
+    // Metro Manila Cam Wrapper
     <div className="baharoute-cambutton-wrapper" onKeyDown={onKeyDown}>
       <button
         ref={buttonRef}
