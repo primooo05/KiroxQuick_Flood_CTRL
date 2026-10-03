@@ -30,7 +30,7 @@
 // constructor itself can also be faked without replacing the manager. The
 // DataSource and MarkerManager factory are likewise injectable for tests.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   MapManager,
   type MapContext,
@@ -107,12 +107,14 @@ const DRIVE_HAZARD_MARKERS: ReadonlyArray<DriveMarker> = (() => {
 import { LocationControl } from './controls/LocationControl';
 import { LayerControl } from './controls/LayerControl';
 import { LayersButton } from './controls/LayersButton';
+import { CamButton } from './controls/CamButton';
 import { CloseIcon } from './controls/icons';
 import { MapLegend } from './overlays/MapLegend';
 import { MarkerManager, type MarkerManagerOptions } from './markers/markerManager';
 import { mapboxMarkerFactory } from './markers/mapboxMarkerFactory';
 import { CameraMarkerManager } from './markers/cameraMarkerManager';
 import { mapboxCameraMarkerFactory } from './markers/mapboxCameraFactory';
+import type { MetroManilaTrafficCamera } from '../types/camera';
 import {
   clipCameraViewportToNcr,
   fetchWindyCameraImageUrl,
@@ -381,6 +383,9 @@ export interface MapManagerLike {
   frameOverview?: () => void;
   /** Returns the underlying map instance, or null before init / after destroy. */
   getMap?: () => MinimalMap | null;
+  /** Delegates to the underlying map's easeTo/flyTo. */
+  easeTo?: (options: unknown) => void;
+  flyTo?: (options: unknown) => void;
 }
 
 export interface MapViewProps {
@@ -1315,6 +1320,17 @@ export function MapView({
   const handleZoomIn = (): void => managerRef.current?.zoomIn?.();
   const handleZoomOut = (): void => managerRef.current?.zoomOut?.();
   const handleRecenter = (): void => managerRef.current?.recenter?.();
+
+  const handleSelectCameraFromList = useCallback(
+    (camera: MetroManilaTrafficCamera): void => {
+      managerRef.current?.easeTo?.({
+        center: [...camera.coordinates],
+        zoom: 14,
+      });
+      cameraMarkerManagerRef.current?.openPopupForCamera(camera);
+    },
+    [],
+  );
 
   // Map rotation: current bearing (degrees), kept in sync with the map so the
   // compass needle reflects rotation done via gestures too.
@@ -2367,6 +2383,8 @@ export function MapView({
         <button
           type="button"
           className="baharoute-mobile-menu-button baharoute-round-button baharoute-focus-ring"
+          data-testid="controls-menu-button"
+          title={mobileControlsOpen ? 'Close map controls' : 'Open map controls'}
           aria-label={mobileControlsOpen ? 'Close map controls' : 'Open map controls'}
           aria-expanded={mobileControlsOpen}
           aria-controls="map-control-items"
@@ -2378,10 +2396,10 @@ export function MapView({
             <span />
           </span>
         </button>
-        <div className="baharoute-control-card baharoute-control-card--single baharoute-recenter-card">
-          <RecenterControl onRecenter={handleRecenter} />
-        </div>
         <div id="map-control-items" className="baharoute-control-items">
+          <div className="baharoute-control-card baharoute-control-card--single baharoute-recenter-card"><RecenterControl onRecenter={handleRecenter} /></div>
+
+
           <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />
           <div className="baharoute-control-card baharoute-control-card--single"><ViewModeControl is3D={is3D || driving} onToggle={handleViewModeToggle} /></div>
           <div className="baharoute-control-card baharoute-control-card--rotate"><RotateControl bearing={bearing} onRotate={handleRotateBy} onResetNorth={handleResetNorth} /></div>
@@ -2391,6 +2409,15 @@ export function MapView({
               <span aria-hidden="true">⚠</span>
             </button>
           </div>
+          <CamButton
+            loadCameras={async (signal) => {
+              const snapshot = loadCameraSnapshot
+                ? await loadCameraSnapshot(signal)
+                : await fetchWindyCameras(fetch, signal);
+              return snapshot.cameras;
+            }}
+            onSelectCamera={handleSelectCameraFromList}
+          />
           <LayersButton>
           <LayerControl
             layers={layers}
@@ -2489,7 +2516,7 @@ export function MapView({
           resumable search panel so two large left-side panels never stack
           (they restore when Insights closes). */}
       {primaryLeftPanel === 'search' && (
-        <div className="baharoute-trip-host" data-testid="trip-host">
+        <div className="baharoute-trip-host baharoute-trip-host--search" data-testid="trip-host">
           <RouteSearchPanel
             origin={tripOrigin}
             destination={tripDestination}

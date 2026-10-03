@@ -3,7 +3,7 @@
 // The SEARCH step: choosing an origin/destination via place search, the
 // current-location + select-on-map affordances, and the NCR-only find gate.
 
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
@@ -30,6 +30,31 @@ function Harness(props: {
 }
 
 describe('RouteSearchPanel', () => {
+  it('shows a drag handle and collapses after a 75% downward drag, then reopens', () => {
+    render(<Harness />);
+    const panel = screen.getByTestId('route-search-panel');
+    const handle = screen.getByRole('separator', { name: /drag down to close/i });
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({ height: 400 } as DOMRect);
+    Object.defineProperty(handle, 'setPointerCapture', { value: vi.fn() });
+    Object.defineProperty(handle, 'hasPointerCapture', { value: () => false });
+
+    const pointer = (type: string, clientY: number) => {
+      const event = new MouseEvent(type, { bubbles: true, clientY });
+      Object.defineProperties(event, {
+        pointerId: { value: 1 },
+        pointerType: { value: 'touch' },
+      });
+      fireEvent(handle, event);
+    };
+    pointer('pointerdown', 100);
+    pointer('pointermove', 400);
+    pointer('pointerup', 400);
+
+    expect(screen.queryByTestId('route-search-panel')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Baha-Route' }));
+    expect(screen.getByTestId('route-search-panel')).toBeInTheDocument();
+  });
+
   it('renders From/To fields and a hint (no manual Find routes button) initially', () => {
     render(<Harness />);
     expect(screen.getByTestId('search-field-origin')).toBeInTheDocument();

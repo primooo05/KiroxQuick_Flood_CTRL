@@ -128,6 +128,39 @@ export class CameraMarkerManager {
     }
   }
 
+  openPopupForCamera(cameraOrId: MetroManilaTrafficCamera | string): boolean {
+    const sourceId = typeof cameraOrId === 'string' ? cameraOrId : cameraOrId.sourceId;
+    for (const [key, placed] of this.markers) {
+      if (placed.camera.sourceId === sourceId) {
+        this.openPopup(key);
+        return true;
+      }
+    }
+    if (typeof cameraOrId !== 'string') {
+      const key = cameraKey(cameraOrId);
+      const button = createCameraMarkerElement(cameraOrId, this.doc);
+      const placed: PlacedCamera = {
+        camera: cameraOrId,
+        button,
+        marker: this.factory.marker(button).setLngLat([...cameraOrId.coordinates]).addTo(this.map),
+      };
+      button.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.openPopup(key);
+      });
+      button.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          this.openPopup(key);
+        }
+      });
+      this.markers.set(key, placed);
+      this.openPopup(key);
+      return true;
+    }
+    return false;
+  }
+
   destroy(): void {
     this.closePopup();
     for (const marker of this.markers.values()) marker.marker.remove();

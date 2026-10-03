@@ -93,3 +93,11 @@ export const CompassIcon = () => (
     <path d="M12 20 L9.5 12 L12 12 Z" />
   </Svg>
 );
+
+/** Camera icon for the webcams control button. */
+export const CameraIcon = () => (
+  <Svg>
+    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+    <circle cx="12" cy="13" r="4" />
+  </Svg>
+);

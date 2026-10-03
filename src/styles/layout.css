@@ -153,13 +153,54 @@ body,
   pointer-events: auto;
 }
 
-/* Mobile controls collapse behind one thumb-friendly menu button. */
+/* Controls collapse behind one thumb-friendly menu button from mobile to desktop. */
 .baharoute-mobile-menu-button {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .baharoute-control-items {
-  display: contents;
+  display: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--baharoute-control-gap);
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items {
+  display: flex;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items > * {
+  animation: baharoute-mobile-control-enter 220ms ease-in-out both;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(2) {
+  animation-delay: 25ms;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(3) {
+  animation-delay: 50ms;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(4) {
+  animation-delay: 75ms;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(5) {
+  animation-delay: 100ms;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(6) {
+  animation-delay: 125ms;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(7) {
+  animation-delay: 150ms;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(8) {
+  animation-delay: 175ms;
 }
 
 .baharoute-hamburger-icon {
@@ -174,6 +215,19 @@ body,
   height: 2px;
   border-radius: 2px;
   background: currentColor;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-hamburger-icon span:nth-child(1) {
+  transform: translateY(6px) rotate(45deg);
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-hamburger-icon span:nth-child(2) {
+  opacity: 0;
+}
+
+.baharoute-controls[data-mobile-open='true'] .baharoute-hamburger-icon span:nth-child(3) {
+  transform: translateY(-6px) rotate(-45deg);
 }
 
 @keyframes baharoute-mobile-control-enter {
@@ -211,19 +265,12 @@ body,
     display: none;
   }
 
-  .baharoute-recenter-card {
-    position: fixed;
-    top: calc(var(--baharoute-safe-top) + var(--baharoute-control-inset) + var(--baharoute-touch-target) + 4px);
-    right: calc(var(--baharoute-safe-right) + var(--baharoute-control-inset));
-    z-index: 3;
-  }
-
   .baharoute-controls[data-mobile-open='true'] .baharoute-control-items {
     display: flex;
     position: fixed;
     top: calc(
       var(--baharoute-safe-top) + var(--baharoute-control-inset) +
-        (2 * var(--baharoute-touch-target)) + var(--baharoute-control-gap) + 4px
+        var(--baharoute-touch-target) + var(--baharoute-control-gap) + 4px
     );
     right: calc(var(--baharoute-safe-right) + var(--baharoute-control-inset));
     z-index: 3;
@@ -567,6 +614,368 @@ body,
   color: var(--baharoute-text-muted);
 }
 
+/* --- Webcams (Cambutton) panel -------------------------------------------- */
+@keyframes baharoute-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.baharoute-cambutton-wrapper {
+  position: relative;
+}
+
+.baharoute-cam-panel {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 0;
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 2 * var(--baharoute-control-inset) - 40px);
+  overflow-y: auto;
+  padding: 14px 16px;
+  background: #cad4dc;
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  box-sizing: border-box;
+  color: #1f2937;
+  z-index: 10;
+}
+
+.baharoute-cam-panel[hidden] {
+  display: none;
+}
+
+.baharoute-cam-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.baharoute-cam-panel__title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.baharoute-cam-panel__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.baharoute-cam-panel__badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  color: #4b5563;
+}
+
+.baharoute-cam-panel__hint {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  color: #52606d;
+}
+
+.baharoute-cam-panel__loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.baharoute-cam-panel__error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  color: #991b1b;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.baharoute-cam-panel__retry {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid #b91c1c;
+  background: #ffffff;
+  color: #991b1b;
+  cursor: pointer;
+}
+
+.baharoute-cam-panel__empty {
+  font-size: 13px;
+  color: #52606d;
+  padding: 16px 0;
+  margin: 0;
+}
+
+.baharoute-cam-panel__list {
+  display: flex;
+  flex-direction: column;
+}
+
+.baharoute-cam-item-container {
+  border-top: 1px solid #b8c3cb;
+  border-bottom: 1px solid #b8c3cb;
+  margin-top: -1px;
+  transition: background 0.15s ease;
+}
+
+.baharoute-cam-item-container--selected {
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 10px;
+  border-color: #98a5b0;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.baharoute-cam-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 10px 4px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  border-radius: 8px;
+}
+
+.baharoute-cam-item:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.baharoute-cam-item__thumb {
+  width: 64px;
+  height: 64px;
+  min-width: 64px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #9fa7af;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 12px;
+}
+
+.baharoute-cam-item__thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  background: #9fa7af;
+}
+
+.baharoute-cam-item__thumb-loading {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #9fa7af;
+}
+
+.baharoute-cam-item__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.baharoute-cam-item__spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(0, 0, 0, 0.15);
+  border-top-color: #374151;
+  border-radius: 50%;
+  animation: baharoute-spin 0.8s linear infinite;
+}
+
+.baharoute-cam-item__center {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.baharoute-cam-item__name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #2d3748;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.baharoute-cam-item__city {
+  font-size: 11.5px;
+  color: #52606d;
+  font-weight: 500;
+}
+
+.baharoute-cam-item__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.baharoute-cam-item__meta-texts {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+}
+
+.baharoute-cam-item__date {
+  font-size: 11.5px;
+  color: #374151;
+}
+
+.baharoute-cam-item__time {
+  font-size: 11.5px;
+  color: #374151;
+}
+
+.baharoute-cam-item__status {
+  font-size: 11px;
+  font-weight: 700;
+  color: #15803d;
+  text-transform: capitalize;
+}
+
+.baharoute-cam-item__status--inactive {
+  color: #b91c1c;
+}
+
+.baharoute-cam-item__lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5px;
+  justify-content: center;
+  width: 22px;
+  margin-left: 2px;
+}
+
+.baharoute-cam-item__lines span {
+  display: block;
+  width: 22px;
+  height: 2px;
+  background-color: #555e6b;
+  border-radius: 1px;
+}
+
+.baharoute-cam-detail {
+  padding: 8px 6px 12px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.baharoute-cam-detail__loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  font-size: 12px;
+  color: #374151;
+}
+
+.baharoute-cam-detail__media-wrapper {
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #1a202c;
+  max-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.baharoute-cam-detail__image {
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  display: block;
+}
+
+.baharoute-cam-detail__video {
+  width: 100%;
+  height: 220px;
+  border: 0;
+}
+
+.baharoute-cam-detail__weather {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: #2d3748;
+  background: rgba(255, 255, 255, 0.55);
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
+.baharoute-cam-detail__weather-status {
+  color: #1a365d;
+}
+
+.baharoute-cam-detail__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.baharoute-cam-detail__view-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #2b6cb0;
+  color: #ffffff;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.baharoute-cam-detail__view-btn:hover {
+  background: #2c5282;
+}
+
+.baharoute-cam-detail__link {
+  font-size: 12px;
+  color: #2b6cb0;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.baharoute-cam-detail__link:hover {
+  text-decoration: underline;
+}
+
 /* --- Legend ---------------------------------------------------------------- */
 .baharoute-legend {
   position: absolute;
@@ -655,6 +1064,28 @@ body,
   border-radius: 16px 16px 0 0;
   box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
   box-sizing: border-box;
+  overscroll-behavior: contain;
+}
+.baharoute-trip-reopen {
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px + var(--baharoute-safe-bottom));
+  z-index: 6;
+  min-height: var(--baharoute-touch-target);
+  padding: 10px 18px;
+  transform: translateX(-50%);
+  border: 0;
+  border-radius: 999px;
+  background: var(--baharoute-surface);
+  color: var(--baharoute-text);
+  box-shadow: var(--baharoute-shadow);
+  font-weight: 700;
+  cursor: pointer;
+  animation: baharoute-trip-reopen 280ms ease-in-out;
+}
+@keyframes baharoute-trip-reopen {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
 }
 .baharoute-popup-close {
   position: absolute;
@@ -831,6 +1262,19 @@ body,
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
     z-index: 9;
+  }
+
+  .baharoute-cam-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 80dvh;
+    padding-bottom: calc(14px + var(--baharoute-safe-bottom));
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.25);
+    z-index: 11;
   }
 
   /* Keep the map controls reachable above any open bottom sheet: raise them
@@ -1591,6 +2035,23 @@ body,
   gap: 12px;
   color: var(--baharoute-text);
 }
+.baharoute-search-panel {
+  transform: translateY(var(--baharoute-trip-drag, 0px));
+  transition: transform 280ms ease-in-out;
+}
+.baharoute-search-panel.is-dragging {
+  transition: none;
+}
+.baharoute-search-panel__drag-target {
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  cursor: grab;
+  user-select: none;
+}
+.baharoute-search-panel__drag-target:active {
+  cursor: grabbing;
+}
 .baharoute-trip-panel__header {
   display: flex;
   flex-direction: column;
@@ -1916,6 +2377,36 @@ body,
     border-radius: var(--baharoute-radius);
     box-shadow: var(--baharoute-shadow);
   }
+  .baharoute-search-panel__drag-target,
+  .baharoute-trip-reopen {
+    display: none !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .baharoute-trip-host--search {
+    padding: 0;
+    max-height: none;
+    overflow: visible;
+    background: transparent;
+    box-shadow: none;
+  }
+  .baharoute-search-panel {
+    max-height: 72vh;
+    overflow-y: auto;
+    padding: 4px 16px calc(16px + var(--baharoute-safe-bottom));
+    box-sizing: border-box;
+    border-radius: 16px 16px 0 0;
+    background: var(--baharoute-surface);
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.18);
+  }
+  .baharoute-search-panel.is-reopening {
+    animation: baharoute-search-reopen 280ms ease-in-out;
+  }
+}
+@keyframes baharoute-search-reopen {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }
 
 /* ==========================================================================

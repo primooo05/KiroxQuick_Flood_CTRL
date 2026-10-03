@@ -18,7 +18,7 @@
 // picking are all injected/callbacks so the panel needs no real map and is
 // straightforward to test.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import {
   searchPlaces as defaultSearchPlaces,
   isWithinNCR,
@@ -210,12 +210,77 @@ export function RouteSearchPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pairKey]);
 
+  const panelRef = useRef<HTMLElement>(null);
+  const dragStartRef = useRef<number | null>(null);
+  const dragOffsetRef = useRef(0);
+  const [isClosed, setIsClosed] = useState(false);
+  const [isReopening, setIsReopening] = useState(false);
+  const [dragOffset, setDragOffset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const startPanelDrag = (event: PointerEvent<HTMLElement>) => {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(min-width: 768px)').matches) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    dragStartRef.current = event.clientY;
+    dragOffsetRef.current = 0;
+    setIsDragging(true);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Some mobile browsers do not support pointer capture on a section.
+    }
+  };
+  const movePanelDrag = (event: PointerEvent<HTMLElement>) => {
+    if (dragStartRef.current !== null) {
+      const offset = Math.max(0, event.clientY - dragStartRef.current);
+      dragOffsetRef.current = offset;
+      setDragOffset(offset);
+    }
+  };
+  const finishPanelDrag = (event: PointerEvent<HTMLElement>) => {
+    if (dragStartRef.current === null) return;
+    const height = panelRef.current?.getBoundingClientRect().height ?? 1;
+    const offset = Math.max(dragOffsetRef.current, event.clientY - dragStartRef.current);
+    const shouldClose = offset / height >= 0.75;
+    dragStartRef.current = null;
+    dragOffsetRef.current = 0;
+    setIsDragging(false);
+    setDragOffset(0);
+    if (shouldClose) setIsClosed(true);
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  if (isClosed) {
+    return (
+      <button type="button" className="baharoute-trip-reopen baharoute-focus-ring" onClick={() => { setIsReopening(true); setIsClosed(false); }}>
+        Baha-Route
+      </button>
+    );
+  }
+
   return (
+    // Baha-Route Trip Panel
     <section
-      className="baharoute-trip-panel baharoute-search-panel"
+      ref={panelRef}
+      className={`baharoute-trip-panel baharoute-search-panel${isDragging ? ' is-dragging' : ''}${isReopening ? ' is-reopening' : ''}`}
+      style={{ '--baharoute-trip-drag': `${dragOffset}px` } as CSSProperties}
       aria-label="Plan a trip"
       data-testid="route-search-panel"
     >
+      <div
+        className="baharoute-search-panel__drag-target"
+        style={{ display: 'flex', height: 36, touchAction: 'none' }}
+        role="separator"
+        aria-label="Drag down to close Baha-Route"
+        onPointerDown={startPanelDrag}
+        onPointerMove={movePanelDrag}
+        onPointerUp={finishPanelDrag}
+        onPointerCancel={finishPanelDrag}
+      >
+        <span className="baharoute-search-panel__drag-line" style={{ display: 'block', width: 64, height: 7, background: '#68727d', borderRadius: 999 }} />
+      </div>
       <header className="baharoute-trip-panel__header">
         <h2 className="baharoute-trip-panel__title">Where to?</h2>
         <p className="baharoute-trip-panel__subtitle">
