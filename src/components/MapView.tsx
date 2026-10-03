@@ -1373,6 +1373,7 @@ export function MapView({
   const pickTargetRef = useRef<PickTarget>(null);
   /** True while "report flooding" map-pick mode is active (next tap = report). */
   const [reportPickActive, setReportPickActive] = useState(false);
+  const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const reportPickActiveRef = useRef(false);
   /** A transient trip-flow notice (e.g. out-of-NCR tap/location). */
   const [tripNotice, setTripNotice] = useState<string | null>(null);
@@ -2359,40 +2360,38 @@ export function MapView({
         className="baharoute-controls"
         data-testid="map-controls"
         data-sheet-open={primaryLeftPanel !== null ? 'true' : undefined}
+        data-mobile-open={mobileControlsOpen ? 'true' : undefined}
         hidden={driving}
         style={driving ? { display: 'none' } : undefined}
       >
-        <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />
-        <div className="baharoute-control-card baharoute-control-card--single">
+        <button
+          type="button"
+          className="baharoute-mobile-menu-button baharoute-round-button baharoute-focus-ring"
+          aria-label={mobileControlsOpen ? 'Close map controls' : 'Open map controls'}
+          aria-expanded={mobileControlsOpen}
+          aria-controls="map-control-items"
+          onClick={() => setMobileControlsOpen((open) => !open)}
+        >
+          <span aria-hidden="true" className="baharoute-hamburger-icon">
+            <span />
+            <span />
+            <span />
+          </span>
+        </button>
+        <div className="baharoute-control-card baharoute-control-card--single baharoute-recenter-card">
           <RecenterControl onRecenter={handleRecenter} />
         </div>
-        <div className="baharoute-control-card baharoute-control-card--single">
-          <ViewModeControl is3D={is3D || driving} onToggle={handleViewModeToggle} />
-        </div>
-        <div className="baharoute-control-card baharoute-control-card--rotate">
-          <RotateControl
-            bearing={bearing}
-            onRotate={handleRotateBy}
-            onResetNorth={handleResetNorth}
-          />
-        </div>
-        <div className="baharoute-control-card baharoute-control-card--single">
-          <LocationControl onActivate={handleLocationArrow} />
-        </div>
-        <div className="baharoute-control-card baharoute-control-card--single">
-          <button
-            type="button"
-            className="baharoute-report-flood baharoute-focus-ring"
-            aria-pressed={reportPickActive}
-            title="Report flooding (adds an unverified community report)"
-            aria-label="Report flooding — adds an unverified community report at a point you tap"
-            onClick={handleReportFloodingToggle}
-          >
-            <span aria-hidden="true">⚠</span>
-          </button>
-        </div>
-        {/* Enhancement: layer list opens on demand instead of always covering the map. */}
-        <LayersButton>
+        <div id="map-control-items" className="baharoute-control-items">
+          <ZoomControls onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} />
+          <div className="baharoute-control-card baharoute-control-card--single"><ViewModeControl is3D={is3D || driving} onToggle={handleViewModeToggle} /></div>
+          <div className="baharoute-control-card baharoute-control-card--rotate"><RotateControl bearing={bearing} onRotate={handleRotateBy} onResetNorth={handleResetNorth} /></div>
+          <div className="baharoute-control-card baharoute-control-card--single"><LocationControl onActivate={handleLocationArrow} /></div>
+          <div className="baharoute-control-card baharoute-control-card--single">
+            <button type="button" className="baharoute-report-flood baharoute-focus-ring" aria-pressed={reportPickActive} title="Report flooding (adds an unverified community report)" aria-label="Report flooding — adds an unverified community report at a point you tap" onClick={handleReportFloodingToggle}>
+              <span aria-hidden="true">⚠</span>
+            </button>
+          </div>
+          <LayersButton>
           <LayerControl
             layers={layers}
             groups={layerGroups}
@@ -2412,7 +2411,8 @@ export function MapView({
             }
           />
           <MapContextControl value={mapContext} onChange={handleMapContextChange} />
-        </LayersButton>
+          </LayersButton>
+        </div>
       </div>
 
       {/* Legends appear ONLY for enabled layers (Phase 4 cleanup). The legend

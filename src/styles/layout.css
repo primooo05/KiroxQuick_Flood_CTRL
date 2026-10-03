@@ -153,6 +153,111 @@ body,
   pointer-events: auto;
 }
 
+/* Mobile controls collapse behind one thumb-friendly menu button. */
+.baharoute-mobile-menu-button {
+  display: none;
+}
+
+.baharoute-control-items {
+  display: contents;
+}
+
+.baharoute-hamburger-icon {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.baharoute-hamburger-icon span {
+  display: block;
+  width: 20px;
+  height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+@keyframes baharoute-mobile-control-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 767px) {
+  .baharoute-mobile-menu-button {
+    display: inline-flex;
+    position: fixed;
+    top: calc(var(--baharoute-safe-top) + var(--baharoute-control-inset));
+    right: calc(var(--baharoute-safe-right) + var(--baharoute-control-inset));
+    z-index: 3;
+  }
+
+  .baharoute-control-items {
+    display: none;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--baharoute-control-gap);
+  }
+
+  .baharoute-control-items .baharoute-zoom-controls {
+    display: none;
+  }
+
+  .baharoute-control-items .baharoute-control-card--rotate {
+    display: none;
+  }
+
+  .baharoute-recenter-card {
+    position: fixed;
+    top: calc(var(--baharoute-safe-top) + var(--baharoute-control-inset) + var(--baharoute-touch-target) + 4px);
+    right: calc(var(--baharoute-safe-right) + var(--baharoute-control-inset));
+    z-index: 3;
+  }
+
+  .baharoute-controls[data-mobile-open='true'] .baharoute-control-items {
+    display: flex;
+    position: fixed;
+    top: calc(
+      var(--baharoute-safe-top) + var(--baharoute-control-inset) +
+        (2 * var(--baharoute-touch-target)) + var(--baharoute-control-gap) + 4px
+    );
+    right: calc(var(--baharoute-safe-right) + var(--baharoute-control-inset));
+    z-index: 3;
+  }
+
+  .baharoute-controls[data-mobile-open='true'] .baharoute-control-items > * {
+    animation: baharoute-mobile-control-enter 220ms ease-in-out both;
+  }
+
+  .baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(2) {
+    animation-delay: 25ms;
+  }
+
+  .baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(3) {
+    animation-delay: 50ms;
+  }
+
+  .baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(4) {
+    animation-delay: 75ms;
+  }
+
+  .baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(5) {
+    animation-delay: 100ms;
+  }
+
+  .baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(6) {
+    animation-delay: 125ms;
+  }
+
+  .baharoute-controls[data-mobile-open='true'] .baharoute-control-items > *:nth-child(7) {
+    animation-delay: 150ms;
+  }
+}
+
 /* Reinforce the >= 44x44 CSS px touch target on interactive controls, in
  * addition to the inline sizing already on the buttons (Req 10.4). */
 .baharoute-controls button,
