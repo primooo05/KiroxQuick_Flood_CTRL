@@ -28,7 +28,7 @@ import {
   fetchCameraWeather,
   type CameraWeatherSnapshot,
 } from '../../services/cameraWeatherService';
-import { CameraIcon, CloseIcon } from './icons';
+import { CloseIcon, VideoIcon } from './icons';
 import { formatCameraDateTime } from './camFormatting';
 
 export interface CameraDetailData {
@@ -210,7 +210,7 @@ export function CamButton({
         aria-controls={panelId}
         onClick={() => setOpen((prev) => !prev)}
       >
-        <CameraIcon />
+        <VideoIcon />
       </button>
 
       <div

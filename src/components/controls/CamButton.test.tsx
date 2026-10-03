@@ -46,6 +46,7 @@ describe('CamButton', () => {
     const panel = screen.getByTestId('cam-panel');
 
     expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(button.querySelector('svg rect')).toBeInTheDocument();
     expect(panel).not.toBeVisible();
     expect(loadCameras).not.toHaveBeenCalled();
 
